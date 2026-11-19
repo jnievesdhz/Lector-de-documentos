@@ -454,6 +454,8 @@ class ViewerActivity : Activity() {
         w.settings.apply {
             javaScriptEnabled = true
             allowFileAccess = true
+            // Permite que las páginas locales carguen las fuentes incluidas en la app
+            allowFileAccessFromFileURLs = true
             allowContentAccess = false
             setSupportZoom(true)
             builtInZoomControls = true

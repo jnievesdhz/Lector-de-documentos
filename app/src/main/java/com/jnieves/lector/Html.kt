@@ -6,6 +6,77 @@ package com.jnieves.lector
  */
 object Html {
 
+    /**
+     * Fuentes libres con las mismas medidas que las de Microsoft (las mismas que usa LibreOffice).
+     * Así el texto ocupa el mismo espacio que en PowerPoint o Word y no se monta.
+     */
+    const val FONT_CSS = """
+@font-face{font-family:'Calibri';src:url('file:///android_asset/fonts/Carlito-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Calibri';src:url('file:///android_asset/fonts/Carlito-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Calibri';src:url('file:///android_asset/fonts/Carlito-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Calibri';src:url('file:///android_asset/fonts/Carlito-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Calibri Light';src:url('file:///android_asset/fonts/Carlito-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Calibri Light';src:url('file:///android_asset/fonts/Carlito-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Calibri Light';src:url('file:///android_asset/fonts/Carlito-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Calibri Light';src:url('file:///android_asset/fonts/Carlito-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Carlito';src:url('file:///android_asset/fonts/Carlito-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Carlito';src:url('file:///android_asset/fonts/Carlito-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Carlito';src:url('file:///android_asset/fonts/Carlito-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Carlito';src:url('file:///android_asset/fonts/Carlito-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Cambria';src:url('file:///android_asset/fonts/Caladea-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Cambria';src:url('file:///android_asset/fonts/Caladea-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Cambria';src:url('file:///android_asset/fonts/Caladea-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Cambria';src:url('file:///android_asset/fonts/Caladea-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Caladea';src:url('file:///android_asset/fonts/Caladea-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Caladea';src:url('file:///android_asset/fonts/Caladea-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Caladea';src:url('file:///android_asset/fonts/Caladea-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Caladea';src:url('file:///android_asset/fonts/Caladea-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Arial';src:url('file:///android_asset/fonts/LiberationSans-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Arial';src:url('file:///android_asset/fonts/LiberationSans-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Arial';src:url('file:///android_asset/fonts/LiberationSans-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Arial';src:url('file:///android_asset/fonts/LiberationSans-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Helvetica';src:url('file:///android_asset/fonts/LiberationSans-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Helvetica';src:url('file:///android_asset/fonts/LiberationSans-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Helvetica';src:url('file:///android_asset/fonts/LiberationSans-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Helvetica';src:url('file:///android_asset/fonts/LiberationSans-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Liberation Sans';src:url('file:///android_asset/fonts/LiberationSans-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Liberation Sans';src:url('file:///android_asset/fonts/LiberationSans-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Liberation Sans';src:url('file:///android_asset/fonts/LiberationSans-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Liberation Sans';src:url('file:///android_asset/fonts/LiberationSans-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Times New Roman';src:url('file:///android_asset/fonts/LiberationSerif-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Times New Roman';src:url('file:///android_asset/fonts/LiberationSerif-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Times New Roman';src:url('file:///android_asset/fonts/LiberationSerif-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Times New Roman';src:url('file:///android_asset/fonts/LiberationSerif-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Times';src:url('file:///android_asset/fonts/LiberationSerif-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Times';src:url('file:///android_asset/fonts/LiberationSerif-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Times';src:url('file:///android_asset/fonts/LiberationSerif-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Times';src:url('file:///android_asset/fonts/LiberationSerif-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Liberation Serif';src:url('file:///android_asset/fonts/LiberationSerif-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Liberation Serif';src:url('file:///android_asset/fonts/LiberationSerif-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Liberation Serif';src:url('file:///android_asset/fonts/LiberationSerif-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Liberation Serif';src:url('file:///android_asset/fonts/LiberationSerif-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Courier New';src:url('file:///android_asset/fonts/LiberationMono-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Courier New';src:url('file:///android_asset/fonts/LiberationMono-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Courier New';src:url('file:///android_asset/fonts/LiberationMono-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Courier New';src:url('file:///android_asset/fonts/LiberationMono-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Courier';src:url('file:///android_asset/fonts/LiberationMono-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Courier';src:url('file:///android_asset/fonts/LiberationMono-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Courier';src:url('file:///android_asset/fonts/LiberationMono-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Courier';src:url('file:///android_asset/fonts/LiberationMono-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Liberation Mono';src:url('file:///android_asset/fonts/LiberationMono-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Liberation Mono';src:url('file:///android_asset/fonts/LiberationMono-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Liberation Mono';src:url('file:///android_asset/fonts/LiberationMono-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Liberation Mono';src:url('file:///android_asset/fonts/LiberationMono-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Arial Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Arial Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Arial Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Arial Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-BoldItalic.ttf');font-weight:bold;font-style:italic}
+@font-face{font-family:'Liberation Sans Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-Regular.ttf');font-weight:normal;font-style:normal}
+@font-face{font-family:'Liberation Sans Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-Bold.ttf');font-weight:bold;font-style:normal}
+@font-face{font-family:'Liberation Sans Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-Italic.ttf');font-weight:normal;font-style:italic}
+@font-face{font-family:'Liberation Sans Narrow';src:url('file:///android_asset/fonts/LiberationSansNarrow-BoldItalic.ttf');font-weight:bold;font-style:italic}
+"""
+
     private const val CSS = """
 html,body{margin:0;padding:0}
 body{background:#f4f4f4;color:#161616;font-family:sans-serif;-webkit-text-size-adjust:100%}
@@ -42,7 +113,7 @@ body.docx{background:#e4e4e4;padding:8px}
 .doc .chart{display:block;max-width:100%;margin:6px 0;white-space:normal}
 
 body.sheet{background:#fff;color:#111;padding-bottom:56px}
-table.s{border-collapse:separate;border-spacing:0;font-size:13px;font-family:sans-serif}
+table.s{border-collapse:separate;border-spacing:0;font-size:13px;font-family:'Calibri',sans-serif}
 table.s td{border-right:1px solid #dadada;border-bottom:1px solid #dadada;padding:3px 6px;white-space:pre;background:#fff;color:#111;vertical-align:bottom}
 table.s td.n{text-align:right}
 table.s td.b{text-align:center}
@@ -99,6 +170,7 @@ table.pt td{overflow:hidden}
     }
   }
   fitText();
+  if(document.fonts && document.fonts.ready){ document.fonts.ready.then(function(){ fitText(); }); }
   function fit(){
     var ss=document.querySelectorAll('.sl');
     for(var k=0;k<ss.length;k++){
@@ -187,7 +259,7 @@ function showSheet(i){
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, " +
             "minimum-scale=" + minScale + ", maximum-scale=8, user-scalable=yes\">" +
-            "<style>" + CSS + "</style></head><body class=\"" + cls + "\">" +
+            "<style>" + FONT_CSS + CSS + "</style></head><body class=\"" + cls + "\">" +
             body + "<script>" + SCROLL_SCRIPT + script + "</script></body></html>"
 
     fun message(html: String): String = page("<div class=\"msg\">$html</div>", "", "msg")

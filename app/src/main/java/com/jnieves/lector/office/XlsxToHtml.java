@@ -120,7 +120,7 @@ public final class XlsxToHtml {
 
     private static final class Font {
         boolean b, i, u, strike;
-        String color;
+        String color, name;
     }
 
     private void loadStyles(String path) throws Exception {
@@ -139,6 +139,7 @@ public final class XlsxToHtml {
                     case "u": ft.u = !"none".equals(attr(c, "val")); break;
                     case "strike": ft.strike = on(c); break;
                     case "color": ft.color = rgb(attr(c, "rgb")); break;
+                    case "name": ft.name = attr(c, "val"); break;
                     default: break;
                 }
             }
@@ -165,6 +166,11 @@ public final class XlsxToHtml {
             }
             xfs.add(xf);
         }
+    }
+
+    private static String cssFont(String font) {
+        String safe = font.replace("'", "").replace("\"", "").replace(";", "");
+        return "'" + safe + "',sans-serif";
     }
 
     private static boolean on(Element c) {
@@ -472,7 +478,10 @@ public final class XlsxToHtml {
             }
         }
 
-        sb.append("<table class=\"s\"><thead><tr><th class=\"corner\"></th>");
+        String defFont = fonts.isEmpty() ? null : fonts.get(0).name;
+        sb.append("<table class=\"s\"");
+        if (defFont != null && !defFont.equalsIgnoreCase("Calibri")) sb.append(" style=\"font-family:").append(cssFont(defFont)).append('"');
+        sb.append("><thead><tr><th class=\"corner\"></th>");
         for (int c = 1; c <= lastCol; c++) {
             if (h.hiddenCols.contains(c)) continue;
             Double w = h.widths.get(c);
@@ -556,6 +565,8 @@ public final class XlsxToHtml {
                     css.append("text-decoration:").append(f.u ? "underline " : "").append(f.strike ? "line-through" : "").append(';');
                 }
                 if (f.color != null && !f.color.equalsIgnoreCase("#000000")) css.append("color:").append(f.color).append(';');
+                String def = fonts.get(0).name;
+                if (f.name != null && def != null && !f.name.equals(def)) css.append("font-family:").append(cssFont(f.name)).append(';');
             }
             if (xf.fill >= 0 && xf.fill < fills.size() && fills.get(xf.fill) != null) {
                 css.append("background-color:").append(fills.get(xf.fill)).append(';');

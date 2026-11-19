@@ -59,6 +59,7 @@ public final class DocxToHtml {
     private final List<String> footnotes = new ArrayList<>();
     private final List<String> endnotes = new ArrayList<>();
     private boolean inNote;
+    private String themeMajor, themeMinor;
 
     private DocxToHtml(ZipFile zip, File outDir) {
         this.zip = zip;
@@ -77,6 +78,7 @@ public final class DocxToHtml {
         String base = Ooxml.dirOf(docPath);
         rels = Ooxml.rels(zip, Ooxml.relsPathFor(docPath), base);
 
+        loadTheme(Ooxml.partByType(rels, "/theme", base + "theme/theme1.xml"));
         loadStyles(Ooxml.partByType(rels, "/styles", base + "styles.xml"));
         loadNumbering(Ooxml.partByType(rels, "/numbering", base + "numbering.xml"));
 
@@ -87,7 +89,7 @@ public final class DocxToHtml {
         StringBuilder sb = new StringBuilder(64 * 1024);
         sb.append("<div class=\"doc\" style=\"");
         sb.append("font-size:").append(defaults.sz != null ? fmtPt(defaults.sz) : "11pt").append(';');
-        sb.append("font-family:").append(family(defaults.font)).append(';');
+        sb.append("font-family:").append(cssFont(defaults.font)).append(';');
         if (defaults.color != null) sb.append("color:").append(defaults.color).append(';');
         sb.append("\">");
         if (body != null) blocks(body, sb);
@@ -134,6 +136,17 @@ public final class DocxToHtml {
         String id, type, basedOn, name, jc, numId;
         Integer outline, ilvl;
         Props rp = new Props();
+    }
+
+    private void loadTheme(String path) {
+        try {
+            Document d = Ooxml.dom(zip, path);
+            if (d == null) return;
+            Element fs = kid(kid(d.getDocumentElement(), "themeElements"), "fontScheme");
+            themeMajor = attr(kid(kid(fs, "majorFont"), "latin"), "typeface");
+            themeMinor = attr(kid(kid(fs, "minorFont"), "latin"), "typeface");
+        } catch (Exception ignored) {
+        }
     }
 
     private void loadStyles(String path) throws Exception {
@@ -249,6 +262,12 @@ public final class DocxToHtml {
                 case "rFonts":
                     v = attr(c, "ascii");
                     if (v == null) v = attr(c, "hAnsi");
+                    if (v == null) {
+                        // Fuente del tema (por ejemplo "minorHAnsi" = Calibri)
+                        String th = attr(c, "asciiTheme");
+                        if (th == null) th = attr(c, "hAnsiTheme");
+                        if (th != null) v = th.startsWith("major") ? themeMajor : themeMinor;
+                    }
                     if (v != null) p.font = v;
                     break;
                 case "vertAlign":
@@ -287,6 +306,13 @@ public final class DocxToHtml {
         return "sans-serif";
     }
 
+    /** Nombre real de la fuente (la app trae equivalentes de Calibri, Arial, Times...) y un respaldo. */
+    private static String cssFont(String font) {
+        if (font == null) return "sans-serif";
+        String safe = font.replace("'", "").replace("\"", "").replace(";", "");
+        return "'" + safe + "'," + family(font);
+    }
+
     private static String fmtPt(int halfPoints) {
         if (halfPoints % 2 == 0) return (halfPoints / 2) + "pt";
         return (halfPoints / 2) + ".5pt";
@@ -308,8 +334,8 @@ public final class DocxToHtml {
         }
         if (p.color != null && !p.color.equals(defaults.color)) c.append("color:").append(p.color).append(';');
         if (p.bg != null) c.append("background-color:").append(p.bg).append(';');
-        if (p.font != null && !family(p.font).equals(family(defaults.font))) {
-            c.append("font-family:").append(family(p.font)).append(';');
+        if (p.font != null && !p.font.equals(defaults.font)) {
+            c.append("font-family:").append(cssFont(p.font)).append(';');
         }
         if (Boolean.TRUE.equals(p.caps)) c.append("text-transform:uppercase;");
         if (Boolean.TRUE.equals(p.smallCaps)) c.append("font-variant:small-caps;");
