@@ -798,7 +798,7 @@ public final class PptxToHtml {
         return Math.max(0, Math.min(255, v));
     }
 
-    private static String mods(String hex, Element c) {
+    static String mods(String hex, Element c) {
         double r = Integer.parseInt(hex.substring(0, 2), 16);
         double g = Integer.parseInt(hex.substring(2, 4), 16);
         double b = Integer.parseInt(hex.substring(4, 6), 16);

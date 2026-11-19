@@ -45,7 +45,11 @@ public final class DocxToHtml {
     private Map<String, String[]> rels = new HashMap<>();
 
     private final Map<String, Style> styles = new HashMap<>();
-    private String defaultParaStyle;
+    private String defaultParaStyle, defaultTableStyle;
+    private final Map<String, TStyle> tableStyles = new HashMap<>();
+    /** Formato que el estilo de la tabla da a la celda que se está escribiendo. */
+    private Props cellProps;
+    private String cellJc;
     private Props defaults = new Props();
 
     private final Map<String, String> numToAbstract = new HashMap<>();
@@ -136,6 +140,7 @@ public final class DocxToHtml {
         String id, type, basedOn, name, jc, numId;
         Integer outline, ilvl;
         Props rp = new Props();
+        Element el;
     }
 
     private void loadTheme(String path) {
@@ -182,8 +187,11 @@ public final class DocxToHtml {
                     }
                 }
                 String def = attr(e, "default");
-                if ("paragraph".equals(s.type) && ("1".equals(def) || "true".equals(def))) {
-                    defaultParaStyle = s.id;
+                boolean isDef = "1".equals(def) || "true".equals(def);
+                if ("paragraph".equals(s.type) && isDef) defaultParaStyle = s.id;
+                if ("table".equals(s.type)) {
+                    s.el = e;
+                    if (isDef) defaultTableStyle = s.id;
                 }
                 styles.put(s.id, s);
             }
@@ -538,6 +546,7 @@ public final class DocxToHtml {
         StringBuilder css = new StringBuilder();
         String jc = pPr != null ? val(kid(pPr, "jc")) : null;
         if (jc == null) jc = styleJc(sid);
+        if (jc == null) jc = cellJc;
         if (jc != null) {
             switch (jc) {
                 case "center": css.append("text-align:center;"); break;
@@ -607,7 +616,7 @@ public final class DocxToHtml {
             if (pbb != null && on(pbb)) sb.append("<span class=\"pb\"></span>");
         }
 
-        Props base = defaults.over(styleProps(sid));
+        Props base = defaults.over(cellProps).over(styleProps(sid));
 
         sb.append("<div class=\"p");
         if (level > 0) sb.append(" h").append(Math.min(level, 6));
@@ -878,13 +887,165 @@ public final class DocxToHtml {
     private static final class Cell {
         Element tc;
         int start, span = 1, vmerge; // vmerge: 0 no, 1 inicia, 2 continúa
-        String bg;
+    }
+
+    /** Formato de una región de la tabla: la tabla entera o una parte (encabezado, bandas...). */
+    private static final class Fmt {
+        Props rp = new Props();
+        String jc, fill, vAlign;
+        /** top, left, bottom, right, insideH, insideV -> borde en CSS ("none" si no hay). */
+        final Map<String, String> bd = new HashMap<>();
+
+        void over(Fmt o) {
+            if (o == null) return;
+            rp = rp.over(o.rp);
+            if (o.jc != null) jc = o.jc;
+            if (o.fill != null) fill = o.fill;
+            if (o.vAlign != null) vAlign = o.vAlign;
+            bd.putAll(o.bd);
+        }
+    }
+
+    /** Estilo de tabla ya resuelto, con sus formatos condicionales. */
+    private static final class TStyle {
+        final Map<String, Fmt> conds = new HashMap<>();
+        int rowBand = 1, colBand = 1;
+        String jc;
+        Fmt cond(String type) {
+            return conds.get(type);
+        }
+    }
+
+    private TStyle tableStyle(String id) {
+        if (id == null) return new TStyle();
+        TStyle ts = tableStyles.get(id);
+        if (ts != null) return ts;
+        ts = new TStyle();
+        List<Style> ch = chain(id);
+        for (int k = ch.size() - 1; k >= 0; k--) {
+            Element e = ch.get(k).el;
+            if (e == null) continue;
+            Element tblPr = kid(e, "tblPr");
+            if (tblPr != null) {
+                Element rb = kid(tblPr, "tblStyleRowBandSize");
+                if (rb != null) ts.rowBand = Math.max(1, parseInt(val(rb), 1));
+                Element cb = kid(tblPr, "tblStyleColBandSize");
+                if (cb != null) ts.colBand = Math.max(1, parseInt(val(cb), 1));
+                String jc = val(kid(tblPr, "jc"));
+                if (jc != null) ts.jc = jc;
+            }
+            merge(ts, "wholeTable", fmt(kid(e, "rPr"), kid(e, "pPr"), tblPr, kid(e, "tcPr")));
+            for (Element c : kids(e)) {
+                if (!"tblStylePr".equals(name(c))) continue;
+                String type = attr(c, "type");
+                if (type == null) continue;
+                merge(ts, type, fmt(kid(c, "rPr"), kid(c, "pPr"), kid(c, "tblPr"), kid(c, "tcPr")));
+            }
+        }
+        tableStyles.put(id, ts);
+        return ts;
+    }
+
+    private static void merge(TStyle ts, String type, Fmt f) {
+        Fmt cur = ts.conds.get(type);
+        if (cur == null) ts.conds.put(type, f);
+        else cur.over(f);
+    }
+
+    private Fmt fmt(Element rPr, Element pPr, Element tblPr, Element tcPr) {
+        Fmt f = new Fmt();
+        f.rp = parseRPr(rPr);
+        if (pPr != null) f.jc = val(kid(pPr, "jc"));
+        if (tblPr != null) {
+            borders(kid(tblPr, "tblBorders"), f.bd);
+            String fill = shdFill(kid(tblPr, "shd"));
+            if (fill != null) f.fill = fill;
+        }
+        if (tcPr != null) {
+            borders(kid(tcPr, "tcBorders"), f.bd);
+            String fill = shdFill(kid(tcPr, "shd"));
+            if (fill != null) f.fill = fill;
+            String va = val(kid(tcPr, "vAlign"));
+            if (va != null) f.vAlign = va;
+        }
+        return f;
+    }
+
+    private static void borders(Element holder, Map<String, String> out) {
+        if (holder == null) return;
+        for (Element b : kids(holder)) {
+            String side = name(b);
+            if ("start".equals(side)) side = "left";
+            else if ("end".equals(side)) side = "right";
+            switch (side) {
+                case "top": case "left": case "bottom": case "right": case "insideH": case "insideV":
+                    out.put(side, borderCss(b));
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /** Borde de Word (w:val, w:sz en octavos de punto, w:color) a CSS. */
+    private static String borderCss(Element b) {
+        String v = val(b);
+        if (v == null || v.equals("nil") || v.equals("none")) return "none";
+        double pt = parseInt(attr(b, "sz"), 4) / 8.0;
+        int px = (int) Math.max(1, Math.round(pt * 4 / 3));
+        String style;
+        switch (v) {
+            case "double": case "triple": case "doubleWave":
+            case "thinThickSmallGap": case "thickThinSmallGap": case "thinThickThinSmallGap":
+            case "thinThickMediumGap": case "thickThinMediumGap": case "thinThickThinMediumGap":
+            case "thinThickLargeGap": case "thickThinLargeGap": case "thinThickThinLargeGap":
+                style = "double";
+                px = Math.max(3, px);
+                break;
+            case "dotted":
+                style = "dotted";
+                break;
+            case "dashed": case "dashSmallGap": case "dotDash": case "dotDotDash": case "dashDotStroked":
+                style = "dashed";
+                break;
+            case "thick":
+                style = "solid";
+                px = Math.max(2, px);
+                break;
+            default:
+                style = "solid";
+                break;
+        }
+        String c = attr(b, "color");
+        String color = isHex6(c) ? "#" + c : "#000";
+        return px + "px " + style + " " + color;
+    }
+
+    /** Relleno de un w:shd: color, "transparent" si lo quita, o null si no dice nada. */
+    private static String shdFill(Element shd) {
+        if (shd == null) return null;
+        String v = val(shd);
+        String fill = attr(shd, "fill");
+        if ("solid".equals(v)) {
+            String c = attr(shd, "color");
+            if (isHex6(c)) return "#" + c;
+        }
+        if (isHex6(fill)) return "#" + fill;
+        if ("auto".equals(fill) || "nil".equals(v)) return "transparent";
+        return null;
+    }
+
+    private static boolean look(Element tl, String attrName, int bit, int val) {
+        String a = attr(tl, attrName);
+        if (a != null) return "1".equals(a) || "true".equals(a) || "on".equals(a);
+        return (val & bit) != 0;
     }
 
     private void table(Element tbl, StringBuilder sb) {
         List<Element> rows = new ArrayList<>();
         collect(tbl, "tr", rows);
         List<List<Cell>> grid = new ArrayList<>();
+        int nCols = 0;
         for (Element tr : rows) {
             List<Cell> cells = new ArrayList<>();
             int col = 0;
@@ -905,40 +1066,152 @@ public final class DocxToHtml {
                     if (gs != null) c.span = Math.max(1, parseInt(val(gs), 1));
                     Element vm = kid(tcPr, "vMerge");
                     if (vm != null) c.vmerge = "restart".equals(val(vm)) ? 1 : 2;
-                    Element shd = kid(tcPr, "shd");
-                    String fill = shd != null ? attr(shd, "fill") : null;
-                    if (isHex6(fill)) c.bg = "#" + fill;
                 }
                 col += c.span;
                 cells.add(c);
             }
+            nCols = Math.max(nCols, col);
             grid.add(cells);
         }
+        int nRows = grid.size();
 
-        sb.append("<div class=\"tw\"><table class=\"t\">");
-        for (int i = 0; i < grid.size(); i++) {
+        // Estilo de la tabla y opciones activas (encabezado, bandas...)
+        Element tblPr = kid(tbl, "tblPr");
+        String sid = tblPr != null ? val(kid(tblPr, "tblStyle")) : null;
+        if (sid == null || !styles.containsKey(sid)) sid = defaultTableStyle;
+        TStyle ts = tableStyle(sid);
+        Element tl = tblPr != null ? kid(tblPr, "tblLook") : null;
+        int lv = 0x04A0;
+        if (tl != null) {
+            try {
+                lv = Integer.parseInt(attr(tl, "val") != null ? attr(tl, "val") : "0", 16);
+            } catch (NumberFormatException e) {
+                lv = 0;
+            }
+        }
+        boolean fr = look(tl, "firstRow", 0x20, lv), lr = look(tl, "lastRow", 0x40, lv);
+        boolean fc = look(tl, "firstColumn", 0x80, lv), lc = look(tl, "lastColumn", 0x100, lv);
+        boolean hb = !look(tl, "noHBand", 0x200, lv), vb = !look(tl, "noVBand", 0x400, lv);
+        Fmt direct = fmt(null, null, tblPr, null);
+
+        // Ancho de la tabla y de las columnas
+        List<Integer> gridCols = new ArrayList<>();
+        for (Element gc : kids(kid(tbl, "tblGrid"))) {
+            if ("gridCol".equals(name(gc))) gridCols.add(Math.max(0, parseInt(attr(gc, "w"), 0)));
+        }
+        int total = 0;
+        for (int w : gridCols) total += w;
+        StringBuilder tcss = new StringBuilder();
+        Element tw = tblPr != null ? kid(tblPr, "tblW") : null;
+        if (tw != null && "pct".equals(attr(tw, "type"))) {
+            String w = attr(tw, "w");
+            double pct = w != null && w.endsWith("%") ? parseInt(w.substring(0, w.length() - 1), 100) : parseInt(w, 5000) / 50.0;
+            if (pct > 0) tcss.append("width:").append(Math.round(Math.min(100, pct))).append("%;");
+        } else if (total > 0) {
+            tcss.append("width:min(100%,").append(px(total)).append("px);");
+        }
+        String tjc = tblPr != null ? val(kid(tblPr, "jc")) : null;
+        if (tjc == null) tjc = ts.jc;
+        if ("center".equals(tjc)) tcss.append("margin:0 auto;");
+        else if ("right".equals(tjc) || "end".equals(tjc)) tcss.append("margin-left:auto;");
+
+        sb.append("<div class=\"tw\"><table class=\"t\"");
+        if (tcss.length() > 0) sb.append(" style=\"").append(tcss).append('"');
+        sb.append('>');
+        if (total > 0 && gridCols.size() >= nCols) {
+            sb.append("<colgroup>");
+            for (int w : gridCols) {
+                sb.append("<col style=\"width:").append(String.format(Locale.ROOT, "%.1f", w * 100.0 / total)).append("%\">");
+            }
+            sb.append("</colgroup>");
+        }
+        Props savedProps = cellProps;
+        String savedJc = cellJc;
+        for (int i = 0; i < nRows; i++) {
             sb.append("<tr>");
             for (Cell c : grid.get(i)) {
                 if (c.vmerge == 2) continue;
                 int rowspan = 1;
                 if (c.vmerge == 1) {
-                    for (int j = i + 1; j < grid.size(); j++) {
+                    for (int j = i + 1; j < nRows; j++) {
                         Cell below = cellAt(grid.get(j), c.start);
                         if (below != null && below.vmerge == 2) rowspan++;
                         else break;
                     }
                 }
+                int i2 = i + rowspan - 1, c1 = c.start, c2 = c.start + c.span - 1;
+                Fmt f = new Fmt();
+                Map<String, String> edge = new HashMap<>();
+                int[] g = {i, i2, c1, c2, nRows, nCols};
+                apply(ts.cond("wholeTable"), 'T', g, f, edge);
+                apply(direct, 'T', g, f, edge);
+                if (vb) {
+                    int idx = c1 - (fc ? 1 : 0);
+                    if (idx >= 0 && !(lc && c2 == nCols - 1)) {
+                        apply(ts.cond((idx / ts.colBand) % 2 == 0 ? "band1Vert" : "band2Vert"), 'C', g, f, edge);
+                    }
+                }
+                if (hb) {
+                    int idx = i - (fr ? 1 : 0);
+                    if (idx >= 0 && !(lr && i2 == nRows - 1)) {
+                        apply(ts.cond((idx / ts.rowBand) % 2 == 0 ? "band1Horz" : "band2Horz"), 'R', g, f, edge);
+                    }
+                }
+                if (fc && c1 == 0) apply(ts.cond("firstCol"), 'C', g, f, edge);
+                if (lc && c2 == nCols - 1) apply(ts.cond("lastCol"), 'C', g, f, edge);
+                if (fr && i == 0) apply(ts.cond("firstRow"), 'R', g, f, edge);
+                if (lr && i2 == nRows - 1 && nRows > 1) apply(ts.cond("lastRow"), 'R', g, f, edge);
+                if (fr && fc && i == 0 && c1 == 0) apply(ts.cond("nwCell"), 'X', g, f, edge);
+                if (fr && lc && i == 0 && c2 == nCols - 1) apply(ts.cond("neCell"), 'X', g, f, edge);
+                if (lr && fc && i2 == nRows - 1 && c1 == 0) apply(ts.cond("swCell"), 'X', g, f, edge);
+                if (lr && lc && i2 == nRows - 1 && c2 == nCols - 1) apply(ts.cond("seCell"), 'X', g, f, edge);
+                Element tcPr = kid(c.tc, "tcPr");
+                if (tcPr != null) apply(fmt(null, null, null, tcPr), 'X', g, f, edge);
+
                 sb.append("<td");
                 if (c.span > 1) sb.append(" colspan=\"").append(c.span).append('"');
                 if (rowspan > 1) sb.append(" rowspan=\"").append(rowspan).append('"');
-                if (c.bg != null) sb.append(" style=\"background-color:").append(c.bg).append('"');
-                sb.append('>');
+                sb.append(" style=\"");
+                for (String side : new String[]{"top", "right", "bottom", "left"}) {
+                    String v = edge.get(side);
+                    sb.append("border-").append(side).append(':').append(v != null ? v : "none").append(';');
+                }
+                if (f.fill != null && !"transparent".equals(f.fill)) sb.append("background-color:").append(f.fill).append(';');
+                if ("center".equals(f.vAlign)) sb.append("vertical-align:middle;");
+                else if ("bottom".equals(f.vAlign)) sb.append("vertical-align:bottom;");
+                sb.append("\">");
+                cellProps = savedProps == null ? f.rp : savedProps.over(f.rp);
+                cellJc = f.jc;
                 blocks(c.tc, sb);
+                cellProps = savedProps;
+                cellJc = savedJc;
                 sb.append("</td>");
             }
             sb.append("</tr>");
         }
         sb.append("</table></div>");
+    }
+
+    /**
+     * Suma el formato de una región a la celda. Los bordes de la región van a los
+     * lados de la celda según dónde quede: g = {fila, filaFin, col, colFin, filas, cols}.
+     * Región 'T' tabla entera, 'R' fila, 'C' columna, 'X' la celda sola.
+     */
+    private static void apply(Fmt x, char geo, int[] g, Fmt f, Map<String, String> edge) {
+        if (x == null) return;
+        f.rp = f.rp.over(x.rp);
+        if (x.jc != null) f.jc = x.jc;
+        if (x.fill != null) f.fill = x.fill;
+        if (x.vAlign != null) f.vAlign = x.vAlign;
+        boolean rowEdges = geo == 'R' || geo == 'X', colEdges = geo == 'C' || geo == 'X';
+        put(edge, "top", x.bd.get(rowEdges || g[0] == 0 ? "top" : "insideH"));
+        put(edge, "bottom", x.bd.get(rowEdges || g[1] == g[4] - 1 ? "bottom" : "insideH"));
+        put(edge, "left", x.bd.get(colEdges || g[2] == 0 ? "left" : "insideV"));
+        put(edge, "right", x.bd.get(colEdges || g[3] == g[5] - 1 ? "right" : "insideV"));
+    }
+
+    private static void put(Map<String, String> m, String k, String v) {
+        if (v != null) m.put(k, v);
     }
 
     private static Cell cellAt(List<Cell> row, int start) {

@@ -102,9 +102,9 @@ body.docx{background:#e4e4e4;padding:8px}
 .doc .h1{font-size:1.55em}.doc .h2{font-size:1.3em}.doc .h3{font-size:1.15em}
 .doc .li{display:inline-block;min-width:1.5em;padding-right:.3em;text-indent:0}
 .doc .tw{overflow-x:auto;margin:.4em 0 .8em}
-.doc table.t{border-collapse:collapse;min-width:60%}
-.doc table.t td{border:1px solid #9a9a9a;padding:4px 6px;vertical-align:top}
-.doc table.t .p{margin:0 0 .2em 0}
+.doc table.t{border-collapse:collapse}
+.doc table.t td{padding:2px 7px;vertical-align:top}
+.doc table.t .p{margin:0}
 .doc img{max-width:100%;height:auto;vertical-align:middle}
 .doc .pb{display:block;border-top:1px dashed #b5b5b5;margin:16px -18px}
 .doc .tb{display:block;border:1px solid #cfcfcf;border-radius:4px;padding:6px 8px;margin:6px 0;white-space:normal}
@@ -126,6 +126,12 @@ table.s th{background:#f1f1f1;color:#5a5a5a;font-weight:normal;border-right:1px 
 table.s th.rh{left:0;z-index:1;text-align:right;min-width:28px}
 table.s th.corner{left:0;z-index:3}
 .sh{display:none}.sh.on{display:block}
+.sw{position:relative;display:inline-block;min-width:100%}
+.xc{position:absolute;display:none;z-index:0;background:#fff;border:1px solid #d9d9d9;box-sizing:border-box;overflow:hidden}
+.xc.xi{background:none;border:0}
+.xc svg,.xc img{display:block;width:100%;height:100%}
+.xcs{width:100%;max-width:900px;aspect-ratio:720/450;margin:8px auto;background:#fff;border:1px solid #d9d9d9;box-sizing:border-box}
+.xcs svg{display:block;width:100%;height:100%}
 .tabs{position:fixed;left:0;right:0;bottom:var(--bb,0px);transition:bottom .2s;display:flex;overflow-x:auto;background:#e9e9e9;border-top:1px solid #bdbdbd;z-index:5}
 .tabs button{flex:0 0 auto;border:0;background:none;padding:13px 16px;font-size:15px;color:#333;white-space:nowrap}
 .tabs button.on{background:#fff;color:#107c41;font-weight:bold;box-shadow:inset 0 -3px 0 #107c41}
@@ -164,6 +170,8 @@ body.sheet.dark .sh{filter:invert(1) hue-rotate(180deg)}
 body.sheet.dark table.s td{background:#f0f0ed}
 body.sheet.dark table.s th{background:#e7e7e3}
 body.sheet.dark .sh img,body.sheet.dark .sh svg{filter:invert(1) hue-rotate(180deg)}
+body.sheet.dark .sh .xc,body.sheet.dark .sh .xcs{filter:invert(1) hue-rotate(180deg)}
+body.sheet.dark .sh .xc svg,body.sheet.dark .sh .xc img,body.sheet.dark .sh .xcs svg{filter:none}
 body.sheet.dark .tabs{background:#18181c;border-top-color:#2a2a30}
 body.sheet.dark .tabs button{color:#9e9ea8}
 body.sheet.dark .tabs button.on{background:#26232f;color:#dcd3ff;box-shadow:inset 0 -3px 0 #c3b4ff}
@@ -235,7 +243,37 @@ function showSheet(i){
   for(var k=0;k<s.length;k++){ s[k].className=(k===i)?'sh on':'sh'; }
   for(var k=0;k<b.length;k++){ b[k].className=(k===i)?'on':''; }
   window.scrollTo(0,0);
+  placeCharts();
 }
+/* Ubica los gráficos e imágenes sobre las celdas donde están anclados */
+function placeCharts(){
+  var ws=document.querySelectorAll('.sh.on .sw');
+  for(var k=0;k<ws.length;k++){
+    var sw=ws[k],t=sw.querySelector('table.s'),xs=sw.querySelectorAll('.xc');
+    if(!t||!xs.length) continue;
+    var hr=t.tHead.rows[0].cells,rows=t.tBodies[0].rows,o=sw.getBoundingClientRect();
+    var pt=function(a){
+      var p=a.split(','),c=hr[+p[1]],r=rows[+p[0]];
+      if(!c||!r) return null;
+      var cr=c.getBoundingClientRect(),rr=r.getBoundingClientRect();
+      return [cr.left-o.left+(+p[2])*cr.width, rr.top-o.top+(+p[3])*rr.height];
+    };
+    for(var j=0;j<xs.length;j++){
+      var d=xs[j],a=pt(d.dataset.f);
+      if(!a) continue;
+      var w,h;
+      if(d.dataset.t){ var b=pt(d.dataset.t); if(!b) continue; w=b[0]-a[0]; h=b[1]-a[1]; }
+      else { var wh=d.dataset.wh.split(','); w=+wh[0]; h=+wh[1]; }
+      if(w<8||h<8) continue;
+      d.style.left=a[0]+'px'; d.style.top=a[1]+'px'; d.style.width=w+'px'; d.style.height=h+'px';
+      d.style.display='block';
+    }
+  }
+}
+placeCharts();
+window.addEventListener('load',placeCharts);
+window.addEventListener('resize',placeCharts);
+if(document.fonts&&document.fonts.ready){ document.fonts.ready.then(placeCharts); }
 """
 
     /**
@@ -376,7 +414,7 @@ window.goFrac=function(f){ var h=document.documentElement.scrollHeight-window.in
     var w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
       var p=n.parentNode; if(!p) return 2;
       var t=p.nodeName; if(t==='SCRIPT'||t==='STYLE') return 2;
-      if(p.closest&&p.closest('.tabs,.sn')) return 2;
+      if(p.closest&&p.closest('.tabs,.sn,svg')) return 2;
       return 1;
     }});
     var nodes=[]; while(w.nextNode()) nodes.push(w.currentNode);
