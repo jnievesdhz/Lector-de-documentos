@@ -19,10 +19,57 @@ body.img{background:#111}
 pre{white-space:pre-wrap;word-wrap:break-word;font-family:monospace;font-size:14px;line-height:1.45;padding:14px;margin:0}
 .msg{padding:48px 24px;text-align:center;font-size:17px;line-height:1.5}
 .msg small{opacity:.7}
+
+body.docx{background:#e4e4e4;padding:8px}
+.doc{background:#fff;color:#111;max-width:860px;margin:0 auto;padding:22px 18px 28px;box-shadow:0 1px 4px rgba(0,0,0,.3);line-height:1.38;overflow-wrap:break-word}
+.doc .p{margin:0 0 .5em 0;white-space:pre-wrap;tab-size:4;min-height:1.1em}
+.doc .h1,.doc .h2,.doc .h3,.doc .h4,.doc .h5,.doc .h6{font-weight:bold;margin:.8em 0 .45em;line-height:1.25}
+.doc .h1{font-size:1.55em}.doc .h2{font-size:1.3em}.doc .h3{font-size:1.15em}
+.doc .li{display:inline-block;min-width:1.5em;padding-right:.3em;text-indent:0}
+.doc .tw{overflow-x:auto;margin:.4em 0 .8em}
+.doc table.t{border-collapse:collapse;min-width:60%}
+.doc table.t td{border:1px solid #9a9a9a;padding:4px 6px;vertical-align:top}
+.doc table.t .p{margin:0 0 .2em 0}
+.doc img{max-width:100%;height:auto;vertical-align:middle}
+.doc .pb{display:block;border-top:1px dashed #b5b5b5;margin:16px -18px}
+.doc .tb{display:block;border:1px solid #cfcfcf;border-radius:4px;padding:6px 8px;margin:6px 0;white-space:normal}
+.doc a{color:#1155cc}
+.doc sup.fn{color:#1155cc;font-size:.7em}
+.doc .notes{margin-top:2em;border-top:1px solid #aaa;padding-top:.6em;font-size:.88em}
+.doc .note{margin-bottom:.4em}
+.doc .note>.p:first-of-type{display:inline}
+.noimg{color:#888;font-style:italic}
+
+body.sheet{background:#fff;color:#111;padding-bottom:56px}
+table.s{border-collapse:separate;border-spacing:0;font-size:13px;font-family:sans-serif}
+table.s td{border-right:1px solid #dadada;border-bottom:1px solid #dadada;padding:3px 6px;white-space:pre;background:#fff;color:#111;vertical-align:bottom}
+table.s td.n{text-align:right}
+table.s td.b{text-align:center}
+table.s td.w{white-space:pre-wrap;max-width:320px}
+table.s th{background:#f1f1f1;color:#5a5a5a;font-weight:normal;border-right:1px solid #cfcfcf;border-bottom:1px solid #cfcfcf;padding:3px 6px;position:sticky;top:0;z-index:2}
+table.s th.rh{left:0;z-index:1;text-align:right;min-width:28px}
+table.s th.corner{left:0;z-index:3}
+.sh{display:none}.sh.on{display:block}
+.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;overflow-x:auto;background:#e9e9e9;border-top:1px solid #bdbdbd;z-index:5}
+.tabs button{flex:0 0 auto;border:0;background:none;padding:13px 16px;font-size:15px;color:#333;white-space:nowrap}
+.tabs button.on{background:#fff;color:#107c41;font-weight:bold;box-shadow:inset 0 -3px 0 #107c41}
+.note{padding:10px 12px;color:#666;font-size:14px}
+
 @media (prefers-color-scheme: dark){
  body{background:#161616;color:#e6e6e6}
  body.pdf{background:#2b2b2b}
  body.img{background:#000}
+ body.docx{background:#2b2b2b}
+ body.sheet{background:#fff;color:#111}
+}
+"""
+
+    const val SHEET_SCRIPT = """
+function showSheet(i){
+  var s=document.querySelectorAll('.sh'),b=document.querySelectorAll('.tabs button');
+  for(var k=0;k<s.length;k++){ s[k].className=(k===i)?'sh on':'sh'; }
+  for(var k=0;k<b.length;k++){ b[k].className=(k===i)?'on':''; }
+  window.scrollTo(0,0);
 }
 """
 
@@ -74,10 +121,10 @@ pre{white-space:pre-wrap;word-wrap:break-word;font-family:monospace;font-size:14
 })();
 """
 
-    fun page(body: String, script: String, cls: String): String =
+    fun page(body: String, script: String, cls: String, minScale: String = "1"): String =
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, " +
-            "minimum-scale=1, maximum-scale=8, user-scalable=yes\">" +
+            "minimum-scale=" + minScale + ", maximum-scale=8, user-scalable=yes\">" +
             "<style>" + CSS + "</style></head><body class=\"" + cls + "\">" +
             body + "<script>" + script + "</script></body></html>"
 

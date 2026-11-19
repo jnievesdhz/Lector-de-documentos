@@ -6,20 +6,23 @@ import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import java.io.File
 
-/** Tipos de archivo que la app sabe mostrar. */
-enum class Kind { PDF, IMAGE, TEXT, OTHER }
+/** Tipos de archivo que la app reconoce. */
+enum class Kind { PDF, DOCX, XLSX, PPTX, CSV, OLD_OFFICE, IMAGE, TEXT, OTHER }
 
 /** Funciones de ayuda para nombres, tipos y archivos temporales. */
 object Docs {
 
+    const val DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
     /** Tipos que se ofrecen al tocar "Abrir archivo". */
-    val SUPPORTED_MIME = arrayOf("application/pdf", "image/*", "text/*")
+    val SUPPORTED_MIME = arrayOf("application/pdf", DOCX_MIME, XLSX_MIME, "image/*", "text/*")
 
     private val IMAGE_EXT = setOf(
         "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg"
     )
     private val TEXT_EXT = setOf(
-        "txt", "csv", "tsv", "md", "log", "json", "xml", "html", "htm",
+        "txt", "md", "log", "json", "xml", "html", "htm",
         "ini", "cfg", "conf", "yaml", "yml", "srt", "r", "py", "kt", "java", "js", "css"
     )
 
@@ -28,6 +31,13 @@ object Docs {
         val m = mime?.lowercase() ?: ""
         return when {
             m == "application/pdf" || ext == "pdf" -> Kind.PDF
+            ext in setOf("docx", "docm", "dotx") || m.contains("wordprocessingml") -> Kind.DOCX
+            ext in setOf("xlsx", "xlsm", "xltx") || m.contains("spreadsheetml") -> Kind.XLSX
+            ext in setOf("pptx", "ppsx", "potx") || m.contains("presentationml") -> Kind.PPTX
+            ext in setOf("csv", "tsv") || m == "text/csv" || m == "text/comma-separated-values" ||
+                m == "text/tab-separated-values" -> Kind.CSV
+            ext in setOf("doc", "xls", "ppt") || m == "application/msword" ||
+                m == "application/vnd.ms-excel" || m == "application/vnd.ms-powerpoint" -> Kind.OLD_OFFICE
             m.startsWith("image/") || ext in IMAGE_EXT -> Kind.IMAGE
             m.startsWith("text/") || m == "application/json" || ext in TEXT_EXT -> Kind.TEXT
             else -> Kind.OTHER

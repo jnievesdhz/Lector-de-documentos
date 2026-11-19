@@ -18,7 +18,7 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "0.1.$buildNumber"
+        versionName = "0.2.$buildNumber"
     }
 
     // Llave propia para firmar la app. Siempre la misma, para que las

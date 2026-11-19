@@ -30,6 +30,9 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
+import com.jnieves.lector.office.CsvToHtml
+import com.jnieves.lector.office.DocxToHtml
+import com.jnieves.lector.office.XlsxToHtml
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -150,8 +153,31 @@ class ViewerActivity : Activity() {
                 }
             }
 
-            when (Docs.kindFor(mime, file.name)) {
+            val kind = Docs.kindFor(mime, file.name)
+            if ((kind == Kind.DOCX || kind == Kind.XLSX || kind == Kind.PPTX) && isOleFile(file)) {
+                showMessageAsync(
+                    "Este archivo está protegido con contraseña o usa un formato antiguo.<br><br>" +
+                        "Por ahora la app no puede abrirlo. Puedes compartirlo o abrirlo con otra app desde el menú."
+                )
+                return
+            }
+            when (kind) {
                 Kind.PDF -> openPdf(file, dir)
+                Kind.DOCX -> writeAndLoad(dir, Html.page(DocxToHtml.convert(file, dir), "", "docx"))
+                Kind.XLSX -> writeAndLoad(
+                    dir, Html.page(XlsxToHtml.convert(file), Html.SHEET_SCRIPT, "sheet", "0.25")
+                )
+                Kind.CSV -> writeAndLoad(
+                    dir, Html.page(CsvToHtml.convert(readText(file).first), Html.SHEET_SCRIPT, "sheet", "0.25")
+                )
+                Kind.PPTX -> showMessageAsync(
+                    "Las presentaciones de PowerPoint llegan en la próxima versión.<br><br>" +
+                        "Mientras tanto puedes compartirla o abrirla con otra app desde el menú de arriba."
+                )
+                Kind.OLD_OFFICE -> showMessageAsync(
+                    "Este es un formato antiguo de Office (.doc, .xls o .ppt) que la app no puede leer.<br><br>" +
+                        "Si puedes, guárdalo como .docx, .xlsx o .pptx. También puedes abrirlo con otra app desde el menú."
+                )
                 Kind.IMAGE -> openImage(file, dir)
                 Kind.TEXT -> openText(file, dir)
                 Kind.OTHER -> showMessageAsync(
@@ -311,7 +337,24 @@ class ViewerActivity : Activity() {
         writeAndLoad(dir, Html.page(body, "", "img"))
     }
 
+    /** Archivos de Office cifrados con contraseña (y los .doc/.xls viejos) empiezan con estos bytes. */
+    private fun isOleFile(file: File): Boolean {
+        val head = ByteArray(4)
+        val n = file.inputStream().use { it.read(head) }
+        return n == 4 && head[0] == 0xD0.toByte() && head[1] == 0xCF.toByte() &&
+            head[2] == 0x11.toByte() && head[3] == 0xE0.toByte()
+    }
+
     private fun openText(file: File, dir: File) {
+        val (text, truncated) = readText(file)
+        val note = if (truncated) {
+            "<div class=\"msg\">El archivo es muy grande. Se muestran los primeros 8 MB.</div>"
+        } else ""
+        writeAndLoad(dir, Html.page("<pre>" + Docs.esc(text) + "</pre>" + note, "", "txt"))
+    }
+
+    /** Lee hasta 8 MB de texto, en UTF-8 o, si no cuadra, en la codificación de Windows. */
+    private fun readText(file: File): Pair<String, Boolean> {
         val max = 8L * 1024 * 1024
         val size = min(file.length(), max).toInt()
         val bytes = ByteArray(size)
@@ -325,13 +368,9 @@ class ViewerActivity : Activity() {
         }
         val data = if (read < size) bytes.copyOf(read) else bytes
         var text = String(data, Charsets.UTF_8)
-        if (text.contains('�')) text = String(data, Charset.forName("windows-1252"))
-        text = text.removePrefix("﻿")
-
-        val note = if (file.length() > max) {
-            "<div class=\"msg\">El archivo es muy grande. Se muestran los primeros 8 MB.</div>"
-        } else ""
-        writeAndLoad(dir, Html.page("<pre>" + Docs.esc(text) + "</pre>" + note, "", "txt"))
+        if (text.contains('\uFFFD')) text = String(data, Charset.forName("windows-1252"))
+        text = text.removePrefix("\uFEFF")
+        return Pair(text, file.length() > max)
     }
 
     // ------------------------------------------------------------ WebView
@@ -352,8 +391,20 @@ class ViewerActivity : Activity() {
         }
         w.addJavascriptInterface(Bridge(), "Android")
         w.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                request.url.scheme != "file"
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val url = request.url
+                if (url.scheme == "file") return false
+                // Los enlaces de los documentos se abren en el navegador del teléfono
+                val scheme = url.scheme ?: ""
+                if (scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "tel") {
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, url))
+                    } catch (_: Exception) {
+                        Toast.makeText(this@ViewerActivity, "No se pudo abrir el enlace", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                return true
+            }
         }
         val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
