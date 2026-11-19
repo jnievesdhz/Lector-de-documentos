@@ -32,6 +32,7 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.jnieves.lector.office.CsvToHtml
 import com.jnieves.lector.office.DocxToHtml
+import com.jnieves.lector.office.PptxToHtml
 import com.jnieves.lector.office.XlsxToHtml
 import java.io.File
 import java.io.FileOutputStream
@@ -170,9 +171,8 @@ class ViewerActivity : Activity() {
                 Kind.CSV -> writeAndLoad(
                     dir, Html.page(CsvToHtml.convert(readText(file).first), Html.SHEET_SCRIPT, "sheet", "0.25")
                 )
-                Kind.PPTX -> showMessageAsync(
-                    "Las presentaciones de PowerPoint llegan en la próxima versión.<br><br>" +
-                        "Mientras tanto puedes compartirla o abrirla con otra app desde el menú de arriba."
+                Kind.PPTX -> writeAndLoad(
+                    dir, Html.page(PptxToHtml.convert(file, dir), Html.SLIDES_SCRIPT, "pptx")
                 )
                 Kind.OLD_OFFICE -> showMessageAsync(
                     "Este es un formato antiguo de Office (.doc, .xls o .ppt) que la app no puede leer.<br><br>" +

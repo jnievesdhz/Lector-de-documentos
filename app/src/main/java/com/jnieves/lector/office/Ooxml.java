@@ -192,6 +192,23 @@ final class Ooxml {
         return null;
     }
 
+    /** Atributo r:id (de relaciones), distinto de un "id" normal en el mismo elemento. */
+    static String rid(Element e) {
+        if (e == null) return null;
+        NamedNodeMap a = e.getAttributes();
+        String fallback = null;
+        for (int i = 0; i < a.getLength(); i++) {
+            Node n = a.item(i);
+            if (!"id".equals(name(n))) continue;
+            String ns = n.getNamespaceURI();
+            if (ns != null && ns.contains("relationships")) return n.getNodeValue();
+            if ("r".equals(n.getPrefix())) return n.getNodeValue();
+            if (ns == null && n.getPrefix() == null) continue;
+            fallback = n.getNodeValue();
+        }
+        return fallback;
+    }
+
     static String val(Element e) {
         return attr(e, "val");
     }

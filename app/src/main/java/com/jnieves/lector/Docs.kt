@@ -14,9 +14,10 @@ object Docs {
 
     const val DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    const val PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
     /** Tipos que se ofrecen al tocar "Abrir archivo". */
-    val SUPPORTED_MIME = arrayOf("application/pdf", DOCX_MIME, XLSX_MIME, "image/*", "text/*")
+    val SUPPORTED_MIME = arrayOf("application/pdf", DOCX_MIME, XLSX_MIME, PPTX_MIME, "image/*", "text/*")
 
     private val IMAGE_EXT = setOf(
         "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg"

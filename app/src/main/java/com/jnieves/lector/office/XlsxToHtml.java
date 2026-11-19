@@ -79,7 +79,7 @@ public final class XlsxToHtml {
             if (!"sheet".equals(name(s))) continue;
             String state = attr(s, "state");
             if ("hidden".equals(state) || "veryHidden".equals(state)) continue;
-            String[] r = rels.get(attr(s, "id"));
+            String[] r = rels.get(Ooxml.rid(s));
             if (r == null) continue;
             sheets.add(new String[]{attr(s, "name"), r[0], r[2]});
         }

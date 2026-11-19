@@ -39,7 +39,7 @@ class MainActivity : Activity() {
         root.addView(title)
 
         val subtitle = TextView(this).apply {
-            text = "PDF, Word, Excel, CSV, imágenes y texto.\nSin anuncios y sin internet."
+            text = "PDF, Word, Excel, PowerPoint, CSV,\nimágenes y texto. Sin anuncios."
             textSize = 15f
             gravity = Gravity.CENTER
             alpha = 0.75f

@@ -603,7 +603,7 @@ public final class DocxToHtml {
                     break;
                 case "hyperlink": {
                     String url = null;
-                    String rid = attr(c, "id");
+                    String rid = Ooxml.rid(c);
                     if (rid != null) {
                         String[] r = rels.get(rid);
                         if (r != null) url = r[0];
@@ -763,7 +763,7 @@ public final class DocxToHtml {
         if (blips.isEmpty()) {
             List<Element> charts = new ArrayList<>();
             Ooxml.descendants(d, "chart", "txbxContent", charts);
-            if (!charts.isEmpty()) out.append("<span class=\"noimg\">[gráfico]</span>");
+            for (Element ch : charts) out.append(chart(ch, ext));
         }
         List<Element> boxes = new ArrayList<>();
         Ooxml.descendants(d, "txbxContent", "txbxContent", boxes);
@@ -774,10 +774,35 @@ public final class DocxToHtml {
         }
     }
 
+    private String chart(Element ch, Element extent) {
+        String[] r = rels.get(Ooxml.rid(ch));
+        if (r == null) return "<span class=\"noimg\">[gráfico]</span>";
+        long cx = extent != null ? Ooxml.parseLong(attr(extent, "cx"), 0) : 0;
+        long cy = extent != null ? Ooxml.parseLong(attr(extent, "cy"), 0) : 0;
+        double w = cx > 0 ? cx / 9525.0 : 480, h = cy > 0 ? cy / 9525.0 : 290;
+        String svg = ChartSvg.render(zip, r[0], w, h, new ChartSvg.Colors() {
+            @Override
+            public String of(Element holder) {
+                if (holder == null) return null;
+                Element c = kid(holder, "srgbClr");
+                String v = c != null ? val(c) : null;
+                return isHex6(v) ? "#" + v : null;
+            }
+
+            @Override
+            public String accent(int n) {
+                return null;
+            }
+        });
+        if (svg == null) return "<span class=\"noimg\">[gráfico]</span>";
+        return "<span class=\"chart\" style=\"width:" + Math.round(w) + "px;aspect-ratio:" + Math.round(w) + "/"
+                + Math.round(h) + "\">" + svg + "</span>";
+    }
+
     private void pict(Element p, StringBuilder out) {
         List<Element> imgs = new ArrayList<>();
         Ooxml.descendants(p, "imagedata", "txbxContent", imgs);
-        for (Element im : imgs) out.append(image(attr(im, "id"), 0));
+        for (Element im : imgs) out.append(image(Ooxml.rid(im), 0));
         List<Element> boxes = new ArrayList<>();
         Ooxml.descendants(p, "txbxContent", "txbxContent", boxes);
         for (Element tb : boxes) {

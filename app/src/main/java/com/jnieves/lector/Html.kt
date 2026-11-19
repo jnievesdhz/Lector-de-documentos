@@ -39,6 +39,7 @@ body.docx{background:#e4e4e4;padding:8px}
 .doc .note{margin-bottom:.4em}
 .doc .note>.p:first-of-type{display:inline}
 .noimg{color:#888;font-style:italic}
+.doc .chart{display:block;max-width:100%;margin:6px 0;white-space:normal}
 
 body.sheet{background:#fff;color:#111;padding-bottom:56px}
 table.s{border-collapse:separate;border-spacing:0;font-size:13px;font-family:sans-serif}
@@ -55,6 +56,21 @@ table.s th.corner{left:0;z-index:3}
 .tabs button.on{background:#fff;color:#107c41;font-weight:bold;box-shadow:inset 0 -3px 0 #107c41}
 .note{padding:10px 12px;color:#666;font-size:14px}
 
+body.pptx{background:#303030;padding:8px 6px}
+.sl{position:relative;width:100%;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.55)}
+.si{position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden;font-family:sans-serif;color:#000;line-height:1.2}
+.shp{position:absolute;box-sizing:border-box}
+.shp img{position:absolute;display:block;max-width:none}
+.txt{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;flex-direction:column;box-sizing:border-box;overflow-wrap:break-word}
+.pp{white-space:pre-wrap;margin:0}
+.bu{display:inline-block;text-indent:0}
+.ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#f2f2f2;border:2px dashed #bbb;color:#888;font-size:24px}
+table.pt{border-collapse:collapse;table-layout:fixed;width:100%}
+table.pt td{overflow:hidden}
+.sl a{color:inherit}
+.sn{color:#bdbdbd;font-size:13px;text-align:center;margin:4px 0 14px}
+.snotes{background:#fff8dc;color:#333;margin:-6px 4px 18px;padding:8px 10px;border-radius:6px;font-size:14px;white-space:pre-wrap;line-height:1.4}
+
 @media (prefers-color-scheme: dark){
  body{background:#161616;color:#e6e6e6}
  body.pdf{background:#2b2b2b}
@@ -62,6 +78,21 @@ table.s th.corner{left:0;z-index:3}
  body.docx{background:#2b2b2b}
  body.sheet{background:#fff;color:#111}
 }
+"""
+
+    /** Ajusta cada diapositiva al ancho de la pantalla. */
+    const val SLIDES_SCRIPT = """
+(function(){
+  function fit(){
+    var ss=document.querySelectorAll('.sl');
+    for(var k=0;k<ss.length;k++){
+      var s=ss[k], w=parseFloat(s.getAttribute('data-w'));
+      s.firstElementChild.style.transform='scale('+(s.clientWidth/w)+')';
+    }
+  }
+  window.addEventListener('resize',fit);
+  fit();
+})();
 """
 
     const val SHEET_SCRIPT = """
