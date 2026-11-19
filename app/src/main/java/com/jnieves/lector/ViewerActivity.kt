@@ -56,6 +56,11 @@ class ViewerActivity : Activity() {
     @Volatile private var docFile: File? = null
     @Volatile private var docName: String = "archivo"
     @Volatile private var docMime: String = "application/octet-stream"
+    @Volatile private var docKind: Kind? = null
+
+    // Posición de lectura (0 = inicio, 1 = final), para volver al mismo punto al girar el teléfono
+    @Volatile private var scrollFrac = 0f
+    private var restoreFrac: Float? = null
 
     // PDF
     private val pdfLock = Any()
@@ -105,6 +110,9 @@ class ViewerActivity : Activity() {
         setContentView(root)
         actionBar?.setDisplayHomeAsUpEnabled(true)
 
+        // Al girar el teléfono la pantalla se vuelve a crear: se reutiliza lo ya convertido
+        if (savedInstanceState != null && restore(savedInstanceState)) return
+
         val uri = incomingUri(intent)
         if (uri == null) {
             showMessage("No se recibió ningún archivo.")
@@ -112,6 +120,58 @@ class ViewerActivity : Activity() {
         }
         showMessage("Abriendo…")
         Thread { load(uri) }.start()
+    }
+
+    // ------------------------------------------------------- girar pantalla
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val dir = docDir ?: return
+        val file = docFile ?: return
+        val kind = docKind ?: return
+        outState.putString("dir", dir.path)
+        outState.putString("file", file.path)
+        outState.putString("name", docName)
+        outState.putString("mime", docMime)
+        outState.putString("kind", kind.name)
+        outState.putString("title", title?.toString())
+        outState.putInt("rw", renderWidth)
+        outState.putFloat("frac", scrollFrac)
+    }
+
+    private fun restore(b: Bundle): Boolean {
+        val dir = b.getString("dir")?.let { File(it) } ?: return false
+        val file = b.getString("file")?.let { File(it) } ?: return false
+        val html = File(dir, "vista.html")
+        if (!html.exists() || !file.exists()) return false
+        val kind = b.getString("kind")?.let { k -> Kind.values().firstOrNull { it.name == k } } ?: return false
+        docDir = dir
+        docFile = file
+        docName = b.getString("name") ?: file.name
+        docMime = b.getString("mime") ?: docMime
+        docKind = kind
+        renderWidth = b.getInt("rw", renderWidth)
+        restoreFrac = b.getFloat("frac", 0f)
+        title = b.getString("title") ?: docName
+        invalidateOptionsMenu()
+        if (kind == Kind.PDF) {
+            Thread {
+                val ok = try {
+                    openRenderer(file) != null
+                } catch (e: Throwable) {
+                    false
+                }
+                runOnUiThread {
+                    if (!isDestroyed) {
+                        if (ok) webView.loadUrl(Uri.fromFile(html).toString())
+                        else showMessage("No se pudo abrir el archivo.")
+                    }
+                }
+            }.start()
+        } else {
+            webView.loadUrl(Uri.fromFile(html).toString())
+        }
+        return true
     }
 
     // ---------------------------------------------------------------- carga
@@ -155,6 +215,7 @@ class ViewerActivity : Activity() {
             }
 
             val kind = Docs.kindFor(mime, file.name)
+            docKind = kind
             if ((kind == Kind.DOCX || kind == Kind.XLSX || kind == Kind.PPTX) && isOleFile(file)) {
                 showMessageAsync(
                     "Este archivo está protegido con contraseña o usa un formato antiguo.<br><br>" +
@@ -197,29 +258,21 @@ class ViewerActivity : Activity() {
 
     // ------------------------------------------------------------------ PDF
 
-    private fun openPdf(file: File, dir: File) {
+    /** Abre el PDF y devuelve el tamaño de cada página (null si la pantalla ya se cerró). */
+    private fun openRenderer(file: File): List<IntArray>? {
         val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         val renderer = try {
             PdfRenderer(fd)
-        } catch (e: SecurityException) {
+        } catch (e: Exception) {
             fd.close()
-            showMessageAsync(
-                "Este PDF está protegido con contraseña.<br>" +
-                    "Por ahora la app no puede abrirlo."
-            )
-            return
-        } catch (e: IOException) {
-            fd.close()
-            showMessageAsync("El PDF parece estar dañado y no se pudo abrir.")
-            return
+            throw e
         }
-
         val sizes = ArrayList<IntArray>()
         synchronized(pdfLock) {
             if (closed) {
                 renderer.close()
                 fd.close()
-                return
+                return null
             }
             pdf = renderer
             pdfFd = fd
@@ -228,6 +281,22 @@ class ViewerActivity : Activity() {
             }
             pageCount = renderer.pageCount
         }
+        return sizes
+    }
+
+    private fun openPdf(file: File, dir: File) {
+        val sizes = try {
+            openRenderer(file)
+        } catch (e: SecurityException) {
+            showMessageAsync(
+                "Este PDF está protegido con contraseña.<br>" +
+                    "Por ahora la app no puede abrirlo."
+            )
+            return
+        } catch (e: IOException) {
+            showMessageAsync("El PDF parece estar dañado y no se pudo abrir.")
+            return
+        } ?: return
         if (sizes.isEmpty()) {
             showMessageAsync("El PDF no tiene páginas.")
             return
@@ -259,6 +328,11 @@ class ViewerActivity : Activity() {
                 worker.execute { renderNext() }
             } catch (_: RejectedExecutionException) {
             }
+        }
+
+        @JavascriptInterface
+        fun onScrollFrac(f: Float) {
+            scrollFrac = f
         }
 
         @JavascriptInterface
@@ -391,6 +465,21 @@ class ViewerActivity : Activity() {
         }
         w.addJavascriptInterface(Bridge(), "Android")
         w.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String?) {
+                val f = restoreFrac
+                if (f != null && url != null && url.startsWith("file:")) {
+                    restoreFrac = null
+                    view.postDelayed({
+                        if (!isDestroyed) {
+                            view.evaluateJavascript(
+                                "(function(){var h=document.documentElement.scrollHeight-window.innerHeight;" +
+                                    "window.scrollTo(0,Math.max(0,h*" + f + "));})()", null
+                            )
+                        }
+                    }, 150)
+                }
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url
                 if (url.scheme == "file") return false

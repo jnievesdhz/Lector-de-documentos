@@ -276,6 +276,66 @@ final class Ooxml {
         return sb.toString();
     }
 
+    /**
+     * Muchas imágenes EMF (formato de Windows) solo envuelven una foto normal.
+     * Busca el mapa de bits más grande dentro del EMF y lo devuelve como
+     * {extensión, bytes} listo para mostrar, o null si el EMF es puro dibujo vectorial.
+     */
+    static Object[] emfBitmap(byte[] d) {
+        if (d == null || d.length < 88 || u32(d, 0) != 1 || u32(d, 40) != 0x464D4520) return null;
+        int off = 0, bestSize = 0, bmiOff = 0, bmiLen = 0, bitsOff = 0, bitsLen = 0;
+        while (off + 8 <= d.length) {
+            long type = u32(d, off);
+            long size = u32(d, off + 4);
+            if (size < 8 || off + size > d.length) break;
+            int ob = -1;
+            if (type == 80 || type == 81) ob = 48;        // SETDIBITSTODEVICE / STRETCHDIBITS
+            else if (type == 76 || type == 77) ob = 84;   // BITBLT / STRETCHBLT
+            if (ob > 0 && size >= ob + 16) {
+                long bo = u32(d, off + ob), bl = u32(d, off + ob + 4), xo = u32(d, off + ob + 8), xl = u32(d, off + ob + 12);
+                if (bl >= 40 && xl > 0 && bo + bl <= size && xo + xl <= size && xl > bestSize) {
+                    bestSize = (int) xl;
+                    bmiOff = off + (int) bo;
+                    bmiLen = (int) bl;
+                    bitsOff = off + (int) xo;
+                    bitsLen = (int) xl;
+                }
+            }
+            if (type == 14) break;
+            off += (int) size;
+        }
+        if (bestSize == 0) return null;
+        long compression = u32(d, bmiOff + 16);
+        if (compression == 4 || compression == 5) {
+            // La imagen interna ya es JPG (4) o PNG (5)
+            byte[] img = new byte[bitsLen];
+            System.arraycopy(d, bitsOff, img, 0, bitsLen);
+            return new Object[]{compression == 4 ? "jpg" : "png", img};
+        }
+        // Arma un archivo BMP: cabecera de 14 bytes + información + píxeles
+        int total = 14 + bmiLen + bitsLen;
+        byte[] bmp = new byte[total];
+        bmp[0] = 'B';
+        bmp[1] = 'M';
+        put32(bmp, 2, total);
+        put32(bmp, 10, 14 + bmiLen);
+        System.arraycopy(d, bmiOff, bmp, 14, bmiLen);
+        System.arraycopy(d, bitsOff, bmp, 14 + bmiLen, bitsLen);
+        return new Object[]{"bmp", bmp};
+    }
+
+    private static long u32(byte[] d, int i) {
+        if (i < 0 || i + 4 > d.length) return 0;
+        return (d[i] & 0xFFL) | ((d[i + 1] & 0xFFL) << 8) | ((d[i + 2] & 0xFFL) << 16) | ((d[i + 3] & 0xFFL) << 24);
+    }
+
+    private static void put32(byte[] d, int i, int v) {
+        d[i] = (byte) v;
+        d[i + 1] = (byte) (v >> 8);
+        d[i + 2] = (byte) (v >> 16);
+        d[i + 3] = (byte) (v >> 24);
+    }
+
     static String extOf(String path) {
         int i = path.lastIndexOf('.');
         return i >= 0 ? path.substring(i + 1).toLowerCase(java.util.Locale.ROOT) : "";

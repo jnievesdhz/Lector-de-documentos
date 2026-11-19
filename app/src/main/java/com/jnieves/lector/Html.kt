@@ -63,6 +63,7 @@ body.pptx{background:#303030;padding:8px 6px}
 .shp img{position:absolute;display:block;max-width:none}
 .txt{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;flex-direction:column;box-sizing:border-box;overflow-wrap:break-word}
 .pp{white-space:pre-wrap;margin:0}
+.txt[data-nw] .pp{white-space:pre}
 .bu{display:inline-block;text-indent:0}
 .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#f2f2f2;border:2px dashed #bbb;color:#888;font-size:24px}
 table.pt{border-collapse:collapse;table-layout:fixed;width:100%}
@@ -152,12 +153,27 @@ function showSheet(i){
 })();
 """
 
+    /** Avisa a la app en qué parte del documento va el usuario. */
+    private const val SCROLL_SCRIPT = """
+(function(){
+  var t=false;
+  function r(){
+    t=false;
+    try{
+      var h=document.documentElement.scrollHeight-window.innerHeight;
+      Android.onScrollFrac(h>0?window.scrollY/h:0);
+    }catch(e){}
+  }
+  window.addEventListener('scroll',function(){ if(!t){ t=true; requestAnimationFrame(r); } },{passive:true});
+})();
+"""
+
     fun page(body: String, script: String, cls: String, minScale: String = "1"): String =
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, " +
             "minimum-scale=" + minScale + ", maximum-scale=8, user-scalable=yes\">" +
             "<style>" + CSS + "</style></head><body class=\"" + cls + "\">" +
-            body + "<script>" + script + "</script></body></html>"
+            body + "<script>" + SCROLL_SCRIPT + script + "</script></body></html>"
 
     fun message(html: String): String = page("<div class=\"msg\">$html</div>", "", "msg")
 }

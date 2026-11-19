@@ -820,9 +820,17 @@ public final class DocxToHtml {
         String local = imageCache.get(path);
         if (local == null) {
             String ext = Ooxml.extOf(path);
-            if (!WEB_IMAGES.contains(ext)) return "<span class=\"noimg\">[imagen]</span>";
             if (imageCount >= MAX_IMAGES) return "";
-            byte[] data = Ooxml.read(zip, path);
+            byte[] data;
+            if (ext.equals("emf")) {
+                Object[] bmp = Ooxml.emfBitmap(Ooxml.read(zip, path));
+                if (bmp == null) return "<span class=\"noimg\">[imagen]</span>";
+                ext = (String) bmp[0];
+                data = (byte[]) bmp[1];
+            } else {
+                if (!WEB_IMAGES.contains(ext)) return "<span class=\"noimg\">[imagen]</span>";
+                data = Ooxml.read(zip, path);
+            }
             if (data == null) return "";
             mediaDir.mkdirs();
             local = "img" + (++imageCount) + "." + ext;
@@ -833,7 +841,7 @@ public final class DocxToHtml {
             }
             imageCache.put(path, local);
         }
-        StringBuilder sb = new StringBuilder("<img src=\"media/").append(local).append('"');
+        StringBuilder sb = new StringBuilder("<img loading=\"lazy\" src=\"media/").append(local).append('"');
         if (cx > 0) sb.append(" style=\"width:").append(Math.max(1, cx / 9525)).append("px\"");
         sb.append(" alt=\"\">");
         return sb.toString();

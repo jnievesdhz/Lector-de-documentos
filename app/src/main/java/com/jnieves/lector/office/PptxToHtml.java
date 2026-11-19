@@ -49,6 +49,8 @@ public final class PptxToHtml {
     private final Map<String, Part> cache = new HashMap<>();
     private final Map<String, Theme> themes = new HashMap<>();
     private Element defaultTextStyle;
+    private Map<String, String[]> presRels = new HashMap<>();
+    private Map<String, Element> tableStyles;
     private long slideW = 9144000, slideH = 6858000;
 
     private PptxToHtml(ZipFile zip, File outDir) {
@@ -131,6 +133,7 @@ public final class PptxToHtml {
             slideH = parseLong(attr(sz, "cy"), slideH);
         }
         defaultTextStyle = kid(pres.root, "defaultTextStyle");
+        presRels = pres.rels;
 
         List<String> slides = new ArrayList<>();
         for (Element s : kids(kid(pres.root, "sldIdLst"))) {
@@ -778,7 +781,7 @@ public final class PptxToHtml {
     private static final class TP {
         Integer sz, marL, indent, spcBef, spcBefPct, lnPct, buSzPct;
         Boolean b, i, u, strike;
-        String color, font, algn, bullet, autoNum, buColor;
+        String color, font, algn, bullet, autoNum, buColor, buFont, cap;
         int autoStart = 1;
         Integer baseline;
 
@@ -800,6 +803,8 @@ public final class PptxToHtml {
             r.font = o.font != null ? o.font : font;
             r.algn = o.algn != null ? o.algn : algn;
             r.buColor = o.buColor != null ? o.buColor : buColor;
+            r.buFont = o.buFont != null ? o.buFont : buFont;
+            r.cap = o.cap != null ? o.cap : cap;
             r.baseline = o.baseline != null ? o.baseline : baseline;
             if (o.bullet != null || o.autoNum != null) {
                 r.bullet = o.bullet;
@@ -836,6 +841,7 @@ public final class PptxToHtml {
                     t.autoStart = parseInt(attr(c, "startAt"), 1);
                     break;
                 case "buClr": t.buColor = colorOf(c, ctx); break;
+                case "buFont": t.buFont = attr(c, "typeface"); break;
                 case "buSzPct": t.buSzPct = parseInt(val(c), 100000); break;
                 case "spcBef": {
                     Element pts = kid(c, "spcPts"), pct = kid(c, "spcPct");
@@ -869,6 +875,8 @@ public final class PptxToHtml {
         if (v != null) t.strike = !v.equals("noStrike");
         v = attr(rPr, "baseline");
         if (v != null) t.baseline = parseInt(v, 0);
+        v = attr(rPr, "cap");
+        if (v != null) t.cap = v;
         for (Element c : kids(rPr)) {
             switch (name(c)) {
                 case "solidFill": t.color = colorOf(c, ctx); break;
@@ -916,14 +924,15 @@ public final class PptxToHtml {
                 .append(r1((rIns != null ? rIns : 91440) / EMU_PX)).append("px ")
                 .append(r1((bIns != null ? bIns : 45720) / EMU_PX)).append("px ")
                 .append(r1((lIns != null ? lIns : 91440) / EMU_PX)).append("px;");
-        if ("none".equals(wrap)) sb.append("white-space:nowrap;");
-        sb.append("\">");
-        paragraphs(txBody, lst, fontColor, defFont, fontScale, ctx, part, sb);
+        sb.append("\"");
+        if ("none".equals(wrap)) sb.append(" data-nw=\"1\"");
+        sb.append('>');
+        paragraphs(txBody, lst, fontColor, defFont, fontScale, ctx, part, sb, null);
         sb.append("</div>");
     }
 
     private void paragraphs(Element txBody, List<Element> lst, String fontColor, String defFont, double fontScale,
-                            Ctx ctx, Part part, StringBuilder sb) {
+                            Ctx ctx, Part part, StringBuilder sb, TP styleTp) {
         int[] counters = new int[10];
         int lastLvl = -1;
         for (Element p : kids(txBody)) {
@@ -932,7 +941,7 @@ public final class PptxToHtml {
             int lvl = Math.max(0, Math.min(8, parseInt(attr(pPr, "lvl"), 0)));
             TP base = levelProps(lst, lvl, ctx);
             TP direct = parseP(pPr, ctx);
-            TP tp = base.over(direct);
+            TP tp = base.over(styleTp).over(direct);
             // El color del estilo de la forma (fontRef) gana sobre el heredado del patrón
             if (fontColor != null && direct.color == null && levelProps(lst.subList(0, 1), lvl, ctx).color == null) {
                 tp.color = fontColor;
@@ -940,6 +949,7 @@ public final class PptxToHtml {
 
             StringBuilder content = new StringBuilder();
             boolean any = false;
+            double firstSize = -1, maxSize = -1;
             for (Element r : kids(p)) {
                 String n = name(r);
                 if ("r".equals(n) || "fld".equals(n)) {
@@ -948,6 +958,9 @@ public final class PptxToHtml {
                     if (text.isEmpty()) continue;
                     any = true;
                     TP rp = tp.over(parseR(kid(r, "rPr"), ctx));
+                    double rs = (rp.sz != null ? rp.sz : 1800) / 100.0 * fontScale;
+                    if (firstSize < 0) firstSize = rs;
+                    maxSize = Math.max(maxSize, rs);
                     String link = null;
                     Element hl = kid(kid(r, "rPr"), "hlinkClick");
                     if (hl != null) {
@@ -980,17 +993,23 @@ public final class PptxToHtml {
             if (marL != 0) css.append("margin-left:").append(r1(marL / EMU_PX)).append("px;");
             if (indent != 0) css.append("text-indent:").append(r1(indent / EMU_PX)).append("px;");
             double size = (tp.sz != null ? tp.sz : 1800) / 100.0 * fontScale;
+            if (any) {
+                size = maxSize;
+            } else {
+                // Línea vacía: mide lo que indica la marca de fin de párrafo
+                TP ep = tp.over(parseR(kid(p, "endParaRPr"), ctx));
+                size = (ep.sz != null ? ep.sz : (tp.sz != null ? tp.sz : 1800)) / 100.0 * fontScale;
+            }
             if (tp.spcBef != null && tp.spcBef > 0) css.append("padding-top:").append(r1(tp.spcBef / 100.0 * fontScale)).append("pt;");
             else if (tp.spcBefPct != null && tp.spcBefPct > 0) css.append("padding-top:").append(r1(size * tp.spcBefPct / 100000.0)).append("pt;");
-            if (tp.lnPct != null) css.append("line-height:").append(r1(120.0 * tp.lnPct / 100000.0)).append("%;");
+            if (tp.lnPct != null) {
+                css.append("line-height:").append(String.format(Locale.ROOT, "%.3f", 1.2 * tp.lnPct / 100000.0)).append(';');
+            }
             css.append("font-size:").append(r1(size)).append("pt;");
 
             sb.append("<div class=\"pp\" style=\"").append(css).append("\">");
             if (!any) {
-                Element end = kid(p, "endParaRPr");
-                TP ep = tp.over(parseR(end, ctx));
-                double es = (ep.sz != null ? ep.sz : 1800) / 100.0 * fontScale;
-                sb.append("<span style=\"font-size:").append(r1(es)).append("pt\">​</span>");
+                sb.append("\u200B");
                 lastLvl = -1;
             } else {
                 // Viñeta o numeración
@@ -1003,7 +1022,7 @@ public final class PptxToHtml {
                     else counters[lvl]++;
                     marker = autoNum(counters[lvl], tp.autoNum);
                 } else if (tp.bullet != null && !tp.bullet.isEmpty()) {
-                    marker = bulletChar(tp.bullet);
+                    marker = bulletChar(tp.bullet, tp.buFont);
                 }
                 lastLvl = lvl;
                 if (marker != null) {
@@ -1011,7 +1030,9 @@ public final class PptxToHtml {
                     if (indent < 0) sb.append("width:").append(r1(-indent / EMU_PX)).append("px;");
                     String bc = tp.buColor != null ? tp.buColor : tp.color;
                     if (bc != null) sb.append("color:").append(bc).append(';');
-                    if (tp.buSzPct != null) sb.append("font-size:").append(r1(tp.buSzPct / 1000.0)).append("%;");
+                    // La viñeta toma el tamaño del primer texto del párrafo
+                    double bs = (firstSize > 0 ? firstSize : size) * (tp.buSzPct != null ? tp.buSzPct / 100000.0 : 1);
+                    sb.append("font-size:").append(r1(bs)).append("pt;");
                     sb.append("\">").append(esc(marker)).append("</span>");
                 }
                 sb.append(content);
@@ -1028,6 +1049,8 @@ public final class PptxToHtml {
         if (Boolean.TRUE.equals(t.i)) c.append("font-style:italic;");
         boolean u = Boolean.TRUE.equals(t.u), s = Boolean.TRUE.equals(t.strike);
         if (u || s) c.append("text-decoration:").append(u ? "underline " : "").append(s ? "line-through" : "").append(';');
+        if ("all".equals(t.cap)) c.append("text-transform:uppercase;");
+        else if ("small".equals(t.cap)) c.append("font-variant:small-caps;");
         String color = t.color != null ? t.color : "#" + scheme("tx1", ctx);
         c.append("color:").append(color).append(';');
         c.append("font-family:").append(fontFamily(t.font != null ? t.font : defFont, ctx)).append(';');
@@ -1047,6 +1070,7 @@ public final class PptxToHtml {
         String l = f.toLowerCase(Locale.ROOT);
         String generic = "sans-serif";
         if (l.contains("courier") || l.contains("consolas") || l.contains("mono")) generic = "monospace";
+        else if (l.contains("condensed") || l.contains("narrow") || l.contains("compressed")) generic = "sans-serif-condensed,sans-serif";
         else if (l.contains("times") || l.contains("cambria") || l.contains("georgia") || l.contains("garamond")
                 || l.contains("palatino") || l.contains("book") || (l.contains("serif") && !l.contains("sans"))) {
             generic = "serif";
@@ -1055,20 +1079,31 @@ public final class PptxToHtml {
         return "'" + safe + "'," + generic;
     }
 
-    private static String bulletChar(String b) {
+    /** Traduce viñetas de fuentes de símbolos (Wingdings, Symbol) a caracteres normales. */
+    private static String bulletChar(String b, String font) {
         char c = b.charAt(0);
-        if (c >= 0xE000 && c <= 0xF8FF) {
-            switch (c & 0xFF) {
-                case 0xA7: return "▪";
-                case 0xFC: return "✓";
-                case 0xD8: return "➢";
-                case 0x76: return "❖";
-                case 0x6E: return "■";
-                default: return "•";
+        boolean pua = c >= 0xE000 && c <= 0xF8FF;
+        if (pua) c = (char) (c & 0xFF);
+        String f = font != null ? font.toLowerCase(Locale.ROOT) : "";
+        if (f.contains("wingdings") || pua) {
+            switch (c) {
+                case 'v': return "\u2756";
+                case 'q': return "\u2751";
+                case 'n': return "\u25A0";
+                case 'l': return "\u25CF";
+                case 'o':
+                case 'p': return "\u25A1";
+                case '\u00D8': return "\u27A2";
+                case '\u00A7': return "\u25AA";
+                case '\u00FC': return "\u2713";
+                case '\u00E0': return "\u2794";
+                case '\u00E8': return "\u2794";
+                case '\u00A8': return "\u25CB";
+                default: return "\u2022";
             }
         }
-        if (c == 'o') return "◦";
-        if (c == 'q' || c == 'n' || c == 'l' || c == 'v' || c == 'Ø' || c == '§' || c == 'ü') return "•";
+        if (f.contains("symbol") && (c == '\u00B7' || c == '\u00D7')) return "\u2022";
+        if (c == 'o' && f.contains("courier")) return "\u25E6";
         return b;
     }
 
@@ -1110,8 +1145,17 @@ public final class PptxToHtml {
         String local = imageCache.get(path);
         if (local != null) return "media/" + local;
         String ext = Ooxml.extOf(path);
-        if (!WEB_IMAGES.contains(ext) || imageCount >= MAX_IMAGES) return null;
-        byte[] data = Ooxml.read(zip, path);
+        if (imageCount >= MAX_IMAGES) return null;
+        byte[] data;
+        if (ext.equals("emf")) {
+            Object[] bmp = Ooxml.emfBitmap(Ooxml.read(zip, path));
+            if (bmp == null) return null;
+            ext = (String) bmp[0];
+            data = (byte[]) bmp[1];
+        } else {
+            if (!WEB_IMAGES.contains(ext)) return null;
+            data = Ooxml.read(zip, path);
+        }
         if (data == null) return null;
         mediaDir.mkdirs();
         local = "s" + (++imageCount) + "." + ext;
@@ -1157,7 +1201,7 @@ public final class PptxToHtml {
                 bt = parseInt(attr(crop, "b"), 0) / 100000.0;
             }
             double wp = 100 / Math.max(0.01, 1 - l - r), hp = 100 / Math.max(0.01, 1 - t - bt);
-            sb.append("<img src=\"").append(src).append("\" alt=\"\" style=\"left:").append(r1(-l * wp))
+            sb.append("<img loading=\"lazy\" src=\"").append(src).append("\" alt=\"\" style=\"left:").append(r1(-l * wp))
                     .append("%;top:").append(r1(-t * hp)).append("%;width:").append(r1(wp))
                     .append("%;height:").append(r1(hp)).append("%\">");
         }
@@ -1241,45 +1285,148 @@ public final class PptxToHtml {
         }
     }
 
+    private Element tableStyle(String id) {
+        if (tableStyles == null) {
+            tableStyles = new HashMap<>();
+            try {
+                String path = Ooxml.partByType(presRels, "/tableStyles", "ppt/tableStyles.xml");
+                Document d = Ooxml.dom(zip, path);
+                if (d != null) {
+                    for (Element st : kids(d.getDocumentElement())) {
+                        if ("tblStyle".equals(name(st))) tableStyles.put(attr(st, "styleId"), st);
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return id != null ? tableStyles.get(id.trim()) : null;
+    }
+
+    /** Borde CSS a partir de un elemento a:ln ("" = sin borde, null = sin definir). */
+    private String lnCss(Element ln, Ctx ctx) {
+        if (ln == null) return null;
+        if (kid(ln, "noFill") != null) return "none";
+        String c = colorOf(kid(ln, "solidFill"), ctx);
+        if (c == null) return null;
+        double w = Math.max(1, parseLong(attr(ln, "w"), 12700) / EMU_PX);
+        return r1(w) + "px solid " + c;
+    }
+
     private void table(Element tbl, Box b, Ctx ctx, Part part, StringBuilder sb) {
         if (tbl == null) return;
         Element tblPr = kid(tbl, "tblPr");
-        boolean styled = tblPr != null && kid(tblPr, "tableStyleId") != null;
-        boolean firstRow = "1".equals(attr(tblPr, "firstRow"));
-        boolean bandRow = "1".equals(attr(tblPr, "bandRow"));
+        Element styleIdEl = kid(tblPr, "tableStyleId");
+        Element style = styleIdEl != null ? tableStyle(styleIdEl.getTextContent()) : null;
+        boolean firstRow = "1".equals(attr(tblPr, "firstRow")), lastRow = "1".equals(attr(tblPr, "lastRow"));
+        boolean firstCol = "1".equals(attr(tblPr, "firstCol")), lastCol = "1".equals(attr(tblPr, "lastCol"));
+        boolean bandRow = "1".equals(attr(tblPr, "bandRow")), bandCol = "1".equals(attr(tblPr, "bandCol"));
         String accent = "#" + (scheme("accent1", ctx) != null ? scheme("accent1", ctx) : "4472C4");
 
+        List<Element> grid = kids(kid(tbl, "tblGrid"));
         sb.append("<div class=\"shp\" style=\"").append(pos(b, false)).append("\"><table class=\"pt\"><colgroup>");
-        for (Element gc : kids(kid(tbl, "tblGrid"))) {
+        for (Element gc : grid) {
             sb.append("<col style=\"width:").append(r1(parseLong(attr(gc, "w"), 0) / EMU_PX)).append("px\">");
         }
         sb.append("</colgroup>");
+        List<Element> rows = new ArrayList<>();
+        for (Element tr : kids(tbl)) if ("tr".equals(name(tr))) rows.add(tr);
+        int nRows = rows.size(), nCols = grid.size();
         List<Element> lst = new ArrayList<>();
         lst.add(defaultTextStyle);
-        int ri = 0;
-        for (Element tr : kids(tbl)) {
-            if (!"tr".equals(name(tr))) continue;
+
+        for (int ri = 0; ri < nRows; ri++) {
+            Element tr = rows.get(ri);
             sb.append("<tr style=\"height:").append(r1(parseLong(attr(tr, "h"), 0) / EMU_PX)).append("px\">");
-            boolean header = styled && firstRow && ri == 0;
+            int ci = 0;
             for (Element tc : kids(tr)) {
                 if (!"tc".equals(name(tc))) continue;
+                int col = ci++;
                 if ("1".equals(attr(tc, "hMerge")) || "1".equals(attr(tc, "vMerge"))) continue;
                 Element tcPr = kid(tc, "tcPr");
-                StringBuilder css = new StringBuilder();
-                String fill = fillCss(tcPr, ctx, part);
-                String textColor = null;
-                if (fill == null && styled) {
-                    if (header) {
+
+                // Partes del estilo que aplican a esta celda, de menor a mayor prioridad
+                List<Element> parts = new ArrayList<>();
+                if (style != null) {
+                    parts.add(kid(style, "wholeTbl"));
+                    int k = col - (firstCol ? 1 : 0);
+                    if (bandCol && k >= 0 && !(lastCol && col == nCols - 1)) parts.add(kid(style, k % 2 == 0 ? "band1V" : "band2V"));
+                    k = ri - (firstRow ? 1 : 0);
+                    if (bandRow && k >= 0 && !(lastRow && ri == nRows - 1)) parts.add(kid(style, k % 2 == 0 ? "band1H" : "band2H"));
+                    if (lastCol && col == nCols - 1) parts.add(kid(style, "lastCol"));
+                    if (firstCol && col == 0) parts.add(kid(style, "firstCol"));
+                    if (lastRow && ri == nRows - 1) parts.add(kid(style, "lastRow"));
+                    if (firstRow && ri == 0) parts.add(kid(style, "firstRow"));
+                }
+                String fill = null, textColor = null;
+                TP stp = new TP();
+                String[] bd = new String[4]; // izquierda, derecha, arriba, abajo
+                for (int pi = 0; pi < parts.size(); pi++) {
+                    Element part0 = parts.get(pi);
+                    if (part0 == null) continue;
+                    Element tx = kid(part0, "tcTxStyle");
+                    if (tx != null) {
+                        String bo = attr(tx, "b"), it = attr(tx, "i");
+                        if (bo != null) stp.b = "on".equals(bo);
+                        if (it != null) stp.i = "on".equals(it);
+                        String c = colorOf(tx, ctx);
+                        if (c == null) c = colorOf(kid(tx, "fontRef"), ctx);
+                        if (c != null) textColor = c;
+                    }
+                    Element ts = kid(part0, "tcStyle");
+                    if (ts == null) continue;
+                    Element f = kid(ts, "fill");
+                    if (f != null) {
+                        String fc = fillCss(f, ctx, part);
+                        if (fc != null) fill = fc;
+                    } else if (kid(ts, "fillRef") != null) {
+                        String c = colorOf(kid(ts, "fillRef"), ctx);
+                        if (c != null) fill = "background:" + c + ";";
+                    }
+                    Element bdr = kid(ts, "tcBdr");
+                    if (bdr != null) {
+                        boolean whole = "wholeTbl".equals(name(part0));
+                        String[] keys = whole
+                                ? new String[]{col == 0 ? "left" : "insideV", col == nCols - 1 ? "right" : "insideV",
+                                ri == 0 ? "top" : "insideH", ri == nRows - 1 ? "bottom" : "insideH"}
+                                : new String[]{"left", "right", "top", "bottom"};
+                        for (int sIdx = 0; sIdx < 4; sIdx++) {
+                            String v = lnCss(kid(kid(bdr, keys[sIdx]), "ln"), ctx);
+                            if (v != null) bd[sIdx] = v;
+                        }
+                    }
+                }
+                if (style == null && styleIdEl != null) {
+                    // Estilo no incluido en el archivo: aproximación del estilo por defecto
+                    if (firstRow && ri == 0) {
                         fill = "background:" + accent + ";";
                         textColor = "#ffffff";
+                        stp.b = true;
                     } else if (bandRow) {
                         int dataRow = firstRow ? ri - 1 : ri;
                         fill = "background:" + mix(accent, dataRow % 2 == 0 ? 0.75 : 0.88) + ";";
+                        textColor = "#000000";
                     }
+                    for (int sIdx = 0; sIdx < 4; sIdx++) bd[sIdx] = "1px solid #fff";
                 }
+                if (style == null && styleIdEl == null) {
+                    for (int sIdx = 0; sIdx < 4; sIdx++) bd[sIdx] = "1px solid #888";
+                }
+
+                // Lo definido en la propia celda gana
+                String own = fillCss(tcPr, ctx, part);
+                if (own != null) fill = own;
+                String[] lnKeys = {"lnL", "lnR", "lnT", "lnB"};
+                for (int sIdx = 0; sIdx < 4; sIdx++) {
+                    String v = lnCss(kid(tcPr, lnKeys[sIdx]), ctx);
+                    if (v != null) bd[sIdx] = v;
+                }
+
+                StringBuilder css = new StringBuilder();
                 if (fill != null) css.append(fill);
-                if (styled) css.append("border:1px solid #fff;");
-                else css.append("border:1px solid #888;");
+                String[] sides = {"left", "right", "top", "bottom"};
+                for (int sIdx = 0; sIdx < 4; sIdx++) {
+                    if (bd[sIdx] != null) css.append("border-").append(sides[sIdx]).append(':').append(bd[sIdx]).append(';');
+                }
                 String anchor = attr(tcPr, "anchor");
                 css.append("vertical-align:").append("ctr".equals(anchor) ? "middle" : "b".equals(anchor) ? "bottom" : "top").append(';');
                 css.append("padding:").append(r1(parseLong(attr(tcPr, "marT"), 45720) / EMU_PX)).append("px ")
@@ -1296,16 +1443,12 @@ public final class PptxToHtml {
                     List<Element> chain = new ArrayList<>();
                     chain.add(kid(txBody, "lstStyle"));
                     chain.addAll(lst);
-                    StringBuilder cell = new StringBuilder();
-                    paragraphs(txBody, chain, textColor, "+mn-lt", 1, ctx, part, cell);
-                    String html = cell.toString();
-                    if (header) html = html.replace("<span style=\"", "<span style=\"font-weight:bold;");
-                    sb.append(html);
+                    if (textColor != null) stp.color = textColor;
+                    paragraphs(txBody, chain, null, "+mn-lt", 1, ctx, part, sb, stp);
                 }
                 sb.append("</td>");
             }
             sb.append("</tr>");
-            ri++;
         }
         sb.append("</table></div>");
     }
