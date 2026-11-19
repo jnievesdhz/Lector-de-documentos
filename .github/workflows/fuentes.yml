@@ -1,0 +1,48 @@
+name: Bajar fuentes externas
+
+# Se corre a mano. Baja las fuentes que no están en Google Fonts
+# (Akasia, gemela libre de Aptos, y Selawik, gemela libre de Segoe UI)
+# y las guarda en fuentes-externas/ para armar el paquete de fuentes.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fuentes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bajar Akasia (Codeberg) y Selawik (GitHub)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          rm -rf fuentes-externas && mkdir -p fuentes-externas/akasia fuentes-externas/selawik /tmp/fx/a /tmp/fx/s
+          cd /tmp/fx/a
+          curl -fsSL https://codeberg.org/api/v1/repos/bloudraad/akasia/releases/latest -o rel.json
+          cat rel.json | jq '{tag_name, assets: [.assets[] | {name, size, browser_download_url}]}'
+          for u in $(jq -r '.assets[].browser_download_url' rel.json); do curl -fsSLO "$u"; done
+          for z in *.zip; do [ -f "$z" ] && unzip -o -q "$z" -d unz; done
+          find . -type f \( -iname '*.ttf' -o -iname '*.otf' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/akasia/" \;
+          find . -type f \( -iname 'OFL*' -o -iname 'LICEN*' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/akasia/" \;
+          jq -r .tag_name rel.json > "$GITHUB_WORKSPACE/fuentes-externas/akasia/VERSION.txt"
+          cd /tmp/fx/s
+          gh release download -R microsoft/Selawik --pattern '*' || true
+          ls -la
+          for z in *.zip; do [ -f "$z" ] && unzip -o -q "$z" -d unz; done
+          find . -type f \( -iname '*.ttf' -o -iname '*.otf' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/selawik/" \;
+          find . -type f \( -iname 'LICEN*' -o -iname 'OFL*' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/selawik/" \;
+          cd "$GITHUB_WORKSPACE"
+          ls -laR fuentes-externas
+
+      - name: Guardar en el repositorio
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add fuentes-externas
+          git commit -m "Fuentes externas (Akasia, Selawik) [skip ci]" || echo "sin cambios"
+          git push
