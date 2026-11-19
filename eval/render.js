@@ -5,9 +5,13 @@ const fs = require('fs');
 const path = require('path');
 
 (async () => {
-  const lib = fs.readFileSync(require.resolve('docx-preview/dist/docx-preview.min.js'), 'utf8');
-  const jszip = fs.readFileSync(require.resolve('jszip/dist/jszip.min.js'), 'utf8');
-  const version = JSON.parse(fs.readFileSync(require.resolve('docx-preview/package.json'), 'utf8')).version;
+  const nm = (...p) => path.join(__dirname, 'node_modules', ...p);
+  const libPath = fs.existsSync(nm('docx-preview', 'dist', 'docx-preview.min.js'))
+    ? nm('docx-preview', 'dist', 'docx-preview.min.js') : nm('docx-preview', 'dist', 'docx-preview.js');
+  const zipPath = nm('jszip', 'dist', 'jszip.min.js');
+  const lib = fs.readFileSync(libPath, 'utf8');
+  const jszip = fs.readFileSync(zipPath, 'utf8');
+  const version = JSON.parse(fs.readFileSync(nm('docx-preview', 'package.json'), 'utf8')).version;
   const out = 'resultados';
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch();
@@ -55,11 +59,11 @@ const path = require('path');
     await page.close();
   }
 
-  const size = (m) => fs.statSync(require.resolve(m)).size;
+  const size = (p) => fs.statSync(p).size;
   fs.writeFileSync(`${out}/reporte.json`, JSON.stringify({
     version, cpuFrenada: '4x', tamanoBytes: {
-      'docx-preview.min.js': size('docx-preview/dist/docx-preview.min.js'),
-      'jszip.min.js': size('jszip/dist/jszip.min.js'),
+      [path.basename(libPath)]: size(libPath),
+      'jszip.min.js': size(zipPath),
     }, resultados: report,
   }, null, 2));
   await browser.close();
