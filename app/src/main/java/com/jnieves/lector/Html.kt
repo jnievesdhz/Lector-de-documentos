@@ -168,6 +168,20 @@ body.sheet.dark .tabs{background:#18181c;border-top-color:#2a2a30}
 body.sheet.dark .tabs button{color:#9e9ea8}
 body.sheet.dark .tabs button.on{background:#26232f;color:#dcd3ff;box-shadow:inset 0 -3px 0 #c3b4ff}
 body.dark .note{color:#9e9ea8}
+
+/* Búsqueda: coincidencias en amarillo suave, la actual en amarillo fuerte */
+mark.hl{background:rgba(255,200,87,.42);color:inherit;border-radius:2px;padding:0}
+mark.hl.cur{background:#ffc857;color:#1a1206;box-shadow:0 0 0 2px #ffc857}
+body.dark .doc mark.hl,body.sheet.dark .sh mark.hl{filter:invert(1) hue-rotate(180deg)}
+.pg{position:relative}
+.hlr{position:absolute;background:rgba(255,200,87,.38);border-radius:2px;pointer-events:none}
+.hlr.cur{background:rgba(255,184,40,.6);box-shadow:0 0 0 2px #ffb828}
+
+/* Miniaturas de diapositivas en el panel lateral */
+body.thumbs{background:#18181c !important;padding:10px 8px !important}
+body.thumbs .spt,body.thumbs .spb,body.thumbs .sn,body.thumbs .snotes,body.thumbs .note{display:none}
+body.thumbs .sl{display:inline-block;width:calc(50% - 10px);margin:5px;vertical-align:top;box-shadow:none;outline:1px solid #2a2a30;border-radius:3px}
+body.thumbs .sl.curthumb{outline:2px solid #c3b4ff;outline-offset:2px}
 """
 
     /** Ajusta cada diapositiva al ancho de la pantalla. */
@@ -311,6 +325,133 @@ function showSheet(i){
 })();
 window.setDark=function(on){ document.body.classList.toggle('dark',!!on); };
 window.setBars=function(on){ document.body.classList.toggle('bars',!!on); };
+window.getFrac=function(){ var h=document.documentElement.scrollHeight-window.innerHeight; return h>0?window.scrollY/h:0; };
+window.goFrac=function(f){ var h=document.documentElement.scrollHeight-window.innerHeight; window.scrollTo(0,Math.max(0,h*f)); };
+"""
+
+    /**
+     * Búsqueda de texto. En Word, Excel, PowerPoint y texto recorre el documento,
+     * sin importar tildes ni mayúsculas, y marca cada coincidencia.
+     * En PDF la app manda los recuadros de cada coincidencia (setPdfHits).
+     */
+    private const val SEARCH_SCRIPT = """
+(function(){
+  var hits=[],cur=-1,marks=[];
+  function norm(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
+  function report(){ try{ Android.onFound(hits.length,cur+1); }catch(e){} }
+  function clear(){
+    for(var k=0;k<marks.length;k++){
+      var m=marks[k],p=m.parentNode; if(!p) continue;
+      while(m.firstChild) p.insertBefore(m.firstChild,m);
+      p.removeChild(m); p.normalize();
+    }
+    marks=[];
+    var o=document.querySelectorAll('.hlr'); for(var k=0;k<o.length;k++) o[k].parentNode.removeChild(o[k]);
+    hits=[]; cur=-1;
+  }
+  function show(i){
+    if(!hits.length){ cur=-1; report(); return; }
+    cur=((i%hits.length)+hits.length)%hits.length;
+    var g=hits[cur];
+    var sh=g[0].closest?g[0].closest('.sh'):null;
+    if(sh&&!sh.classList.contains('on')&&window.showSheet){
+      var all=document.querySelectorAll('.sh');
+      for(var k=0;k<all.length;k++){ if(all[k]===sh){ showSheet(k); break; } }
+    }
+    var prev=document.querySelectorAll('.hl.cur,.hlr.cur'); for(var k=0;k<prev.length;k++) prev[k].classList.remove('cur');
+    for(var k=0;k<g.length;k++) g[k].classList.add('cur');
+    try{ g[0].scrollIntoView({block:'center',inline:'center'}); }catch(e){ g[0].scrollIntoView(); }
+    report();
+  }
+  function firstVisible(){
+    for(var k=0;k<hits.length;k++){ var r=hits[k][0].getBoundingClientRect(); if(r.height>0&&r.top>=64) return k; }
+    return 0;
+  }
+  window.findText=function(q){
+    clear();
+    var nq=norm(q||'').trim();
+    if(!nq){ report(); return; }
+    var w=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
+      var p=n.parentNode; if(!p) return 2;
+      var t=p.nodeName; if(t==='SCRIPT'||t==='STYLE') return 2;
+      if(p.closest&&p.closest('.tabs,.sn')) return 2;
+      return 1;
+    }});
+    var nodes=[]; while(w.nextNode()) nodes.push(w.currentNode);
+    for(var k=0;k<nodes.length&&hits.length<2000;k++){
+      var node=nodes[k],s=node.nodeValue;
+      if(!s||s.length<nq.length||norm(s).indexOf(nq)<0) continue;
+      var ns='',map=[];
+      for(var i=0;i<s.length;i++){ var c=norm(s.charAt(i)); for(var j=0;j<c.length;j++){ ns+=c.charAt(j); map.push(i); } }
+      var found=[],from=0,idx;
+      while((idx=ns.indexOf(nq,from))>=0){ found.push([map[idx],map[idx+nq.length-1]+1]); from=idx+nq.length; }
+      var mine=[];
+      for(var f=found.length-1;f>=0;f--){
+        var st=found[f][0],en=found[f][1];
+        var mid=node.splitText(st); mid.splitText(en-st);
+        var m=document.createElement('mark'); m.className='hl';
+        mid.parentNode.insertBefore(m,mid); m.appendChild(mid);
+        marks.push(m); mine.push([m]);
+      }
+      for(var f=mine.length-1;f>=0;f--) hits.push(mine[f]);
+    }
+    if(hits.length) show(firstVisible()); else report();
+  };
+  // PDF: lista de [página, [[izq, arriba, ancho, alto], ...]] en fracciones de la página
+  window.setPdfHits=function(list){
+    clear();
+    for(var k=0;k<list.length;k++){
+      var pg=document.getElementById('p'+list[k][0]); if(!pg) continue;
+      var g=[],rs=list[k][1];
+      for(var j=0;j<rs.length;j++){
+        var d=document.createElement('div'); d.className='hlr';
+        d.style.left=(rs[j][0]*100)+'%'; d.style.top=(rs[j][1]*100)+'%';
+        d.style.width=(rs[j][2]*100)+'%'; d.style.height=(rs[j][3]*100)+'%';
+        pg.appendChild(d); g.push(d);
+      }
+      if(g.length) hits.push(g);
+    }
+    if(hits.length) show(firstVisible()); else report();
+  };
+  window.findStep=function(d){ if(hits.length) show(cur+d); else report(); };
+  window.findClear=function(){ clear(); };
+
+  // Índice de Word (títulos) y hojas de Excel, para el panel lateral
+  window.getOutline=function(){
+    var hs=document.querySelectorAll('.doc .h1,.doc .h2,.doc .h3'),out=[];
+    for(var k=0;k<hs.length&&out.length<400;k++){
+      var t=(hs[k].textContent||'').replace(/\s+/g,' ').trim(); if(!t) continue;
+      hs[k].setAttribute('data-oi',k);
+      var l=/\bh2\b/.test(hs[k].className)?2:(/\bh3\b/.test(hs[k].className)?3:1);
+      out.push({i:k,l:l,t:t.substring(0,160)});
+    }
+    return JSON.stringify(out);
+  };
+  window.goOutline=function(i){
+    var e=document.querySelector('[data-oi="'+i+'"]');
+    if(e) window.scrollTo(0,Math.max(0,e.getBoundingClientRect().top+window.scrollY-72));
+  };
+  window.getSheets=function(){
+    var b=document.querySelectorAll('.tabs button'),out=[],on=0;
+    for(var k=0;k<b.length;k++){ out.push(b[k].textContent); if(b[k].className==='on') on=k; }
+    return JSON.stringify({names:out,on:on});
+  };
+
+  // Modo miniaturas (el panel lateral carga la misma presentación en pequeño)
+  window.enterThumbs=function(){
+    document.body.classList.add('thumbs');
+    var ss=document.querySelectorAll('.sl');
+    for(var k=0;k<ss.length;k++){
+      (function(n){ ss[n].addEventListener('click',function(ev){ ev.stopPropagation(); try{ Android.onThumb(n+1); }catch(e){} }); })(k);
+    }
+    window.dispatchEvent(new Event('resize'));
+  };
+  window.markThumb=function(n){
+    var ss=document.querySelectorAll('.sl');
+    for(var k=0;k<ss.length;k++) ss[k].classList.toggle('curthumb',k===n-1);
+    var s=ss[n-1]; if(s) s.scrollIntoView({block:'center'});
+  };
+})();
 """
 
     fun page(body: String, script: String, cls: String, minScale: String = "1"): String =
@@ -319,7 +460,7 @@ window.setBars=function(on){ document.body.classList.toggle('bars',!!on); };
             "minimum-scale=" + minScale + ", maximum-scale=8, user-scalable=yes\">" +
             "<style>" + FONT_CSS + CSS + "</style></head><body class=\"" + cls + "\">" +
             "<div class=\"spt\"></div>" + body + "<div class=\"spb\"></div>" +
-            "<script>" + SCROLL_SCRIPT + BARS_SCRIPT + script + "</script></body></html>"
+            "<script>" + SCROLL_SCRIPT + BARS_SCRIPT + SEARCH_SCRIPT + script + "</script></body></html>"
 
     fun message(html: String): String = page("<div class=\"msg\">$html</div>", "", "msg")
 }

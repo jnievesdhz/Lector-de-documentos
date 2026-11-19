@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
@@ -14,6 +15,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.ImageDecoder
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
@@ -22,21 +24,29 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
+import android.util.LruCache
 import android.view.Gravity
 import android.view.PixelCopy
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.GridView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -44,12 +54,16 @@ import com.jnieves.lector.office.CsvToHtml
 import com.jnieves.lector.office.DocxToHtml
 import com.jnieves.lector.office.PptxToHtml
 import com.jnieves.lector.office.XlsxToHtml
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.charset.Charset
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -91,6 +105,33 @@ class ViewerActivity : Activity() {
     @Volatile private var pagesTotal = 0
     private var currentPage = 1
 
+    // Búsqueda
+    private lateinit var titleRow: LinearLayout
+    private lateinit var searchRow: LinearLayout
+    private lateinit var searchField: EditText
+    private lateinit var searchCount: TextView
+    private lateinit var searchBtn: ImageView
+    private lateinit var panelBtn: ImageView
+    private var searching = false
+    private val searchRun = Runnable { runSearch() }
+    @Volatile private var searchToken = 0
+    @Volatile private var pageSizes: List<IntArray> = emptyList()
+    @Volatile private var pdfHasText: Boolean? = null
+
+    // Panel lateral
+    private lateinit var rootView: FrameLayout
+    private var panel: FrameLayout? = null
+    private var drawer: LinearLayout? = null
+    private var panelContent: FrameLayout? = null
+    private var panelWidth = 0
+    private var thumbsWeb: WebView? = null
+    private val thumbExec = Executors.newSingleThreadExecutor()
+    private val pdfThumbs = LruCache<Int, Bitmap>(60)
+
+    /** Lugar del documento antes de un salto, para el historial del panel. */
+    private class Jump(val page: Int, val frac: Float, val time: Long)
+    private val history = ArrayList<Jump>()
+
     // Posición de lectura (0 = inicio, 1 = final), para volver al mismo punto al girar el teléfono
     @Volatile private var scrollFrac = 0f
     private var restoreFrac: Float? = null
@@ -124,6 +165,7 @@ class ViewerActivity : Activity() {
         }
 
         val root = FrameLayout(this)
+        rootView = root
         root.setBackgroundColor(Ui.BG)
         root.addView(
             webView,
@@ -334,6 +376,7 @@ class ViewerActivity : Activity() {
             pageCount = renderer.pageCount
             pagesTotal = renderer.pageCount
         }
+        pageSizes = sizes
         return sizes
     }
 
@@ -408,13 +451,45 @@ class ViewerActivity : Activity() {
         /** 1 = mostrar barras (se llegó arriba), 0 = esconderlas (se está bajando). */
         @JavascriptInterface
         fun onBars(v: Int) {
-            runOnUiThread { if (!isDestroyed) applyBars(v == 1, true) }
+            runOnUiThread {
+                if (!isDestroyed && !(v == 0 && (searching || panel != null))) applyBars(v == 1, true)
+            }
         }
 
         @JavascriptInterface
         fun onTap() {
-            runOnUiThread { if (!isDestroyed) applyBars(!barsShown, true) }
+            runOnUiThread { if (!isDestroyed && !searching) applyBars(!barsShown, true) }
         }
+
+        /** Resultado de la búsqueda: total de coincidencias y cuál se está viendo. */
+        @JavascriptInterface
+        fun onFound(total: Int, cur: Int) {
+            runOnUiThread { if (!isDestroyed) showCount(total, cur) }
+        }
+
+        @JavascriptInterface
+        fun onThumb(n: Int) {
+        }
+    }
+
+    /** Puente del panel de miniaturas de diapositivas: solo le interesa el toque en una diapositiva. */
+    inner class ThumbBridge {
+        @JavascriptInterface fun onThumb(n: Int) {
+            runOnUiThread {
+                if (!isDestroyed) {
+                    recordJump()
+                    goPage(n)
+                    closePanel()
+                }
+            }
+        }
+        @JavascriptInterface fun render(i: Int) {}
+        @JavascriptInterface fun onScrollFrac(f: Float) {}
+        @JavascriptInterface fun onPage(n: Int) {}
+        @JavascriptInterface fun setPageCount(n: Int) {}
+        @JavascriptInterface fun onBars(v: Int) {}
+        @JavascriptInterface fun onTap() {}
+        @JavascriptInterface fun onFound(total: Int, cur: Int) {}
     }
 
     /** Dibuja primero la página pedida más recientemente (la que el usuario está viendo). */
@@ -699,13 +774,20 @@ class ViewerActivity : Activity() {
     private fun buildTopBar(root: FrameLayout) {
         topBox = Ui.column(this).apply { setBackgroundColor(Ui.SURFACE) }
         val bar = Ui.row(this).apply { setPadding(dp(4), dp(6), dp(4), dp(6)) }
+        titleRow = bar
         bar.addView(Ui.iconButton(this, R.drawable.ic_back, "Volver", Ui.TEXT_SOFT) { finish() })
+        panelBtn = Ui.iconButton(this, R.drawable.ic_panel, "Panel lateral", Ui.TEXT_SOFT) { openPanel() }
+        panelBtn.visibility = View.GONE
+        bar.addView(panelBtn)
         val texts = Ui.column(this)
         titleView = Ui.singleLine(Ui.text(this, "Abriendo…", 15f, Ui.TEXT, bold = true))
         subtitleView = Ui.singleLine(Ui.text(this, "", 12f, Ui.MUTED))
         texts.addView(titleView, Ui.lp(Ui.MATCH, Ui.WRAP))
         texts.addView(subtitleView, Ui.lp(Ui.MATCH, Ui.WRAP).apply { topMargin = dp(1) })
         bar.addView(texts, Ui.lp(0, Ui.WRAP, 1f).apply { marginStart = dp(4) })
+        searchBtn = Ui.iconButton(this, R.drawable.ic_search, "Buscar en el documento") { openSearch() }
+        searchBtn.visibility = View.GONE
+        bar.addView(searchBtn)
         moonBtn = Ui.iconButton(this, R.drawable.ic_moon, "Modo oscuro del documento") { toggleDark() }
         shareBtn = Ui.iconButton(this, R.drawable.ic_share_line, "Compartir") { share() }
         moreBtn = Ui.iconButton(this, R.drawable.ic_more, "Más opciones") { showMore(it) }
@@ -716,6 +798,8 @@ class ViewerActivity : Activity() {
         bar.addView(shareBtn)
         bar.addView(moreBtn)
         topBox.addView(bar, Ui.lp(Ui.MATCH, Ui.WRAP))
+        buildSearchRow()
+        topBox.addView(searchRow, Ui.lp(Ui.MATCH, Ui.WRAP))
         topBox.addView(View(this).apply { setBackgroundColor(Ui.BORDER) }, Ui.lp(Ui.MATCH, dp(1)))
         root.addView(topBox, FrameLayout.LayoutParams(Ui.MATCH, Ui.WRAP, Gravity.TOP))
     }
@@ -798,6 +882,8 @@ class ViewerActivity : Activity() {
         shareBtn.visibility = if (ready) View.VISIBLE else View.GONE
         moreBtn.visibility = if (ready) View.VISIBLE else View.GONE
         moonBtn.visibility = if (ready && k in DARK_KINDS) View.VISIBLE else View.GONE
+        searchBtn.visibility = if (canSearch()) View.VISIBLE else View.GONE
+        panelBtn.visibility = if (ready && k in PANEL_KINDS) View.VISIBLE else View.GONE
         styleMoon()
         val showPages = pagesTotal > 1
         pageViews.forEach { it.visibility = if (showPages) View.VISIBLE else View.GONE }
@@ -859,14 +945,619 @@ class ViewerActivity : Activity() {
             .setPositiveButton("Ir") { _, _ ->
                 val n = input.text.toString().trim().toIntOrNull()
                 if (n != null) {
-                    val p = n.coerceIn(1, pagesTotal)
-                    webView.evaluateJavascript("window.goPage&&goPage($p)", null)
+                    recordJump()
+                    goPage(n.coerceIn(1, pagesTotal))
                 }
             }
             .setNegativeButton("Cancelar", null)
             .create()
         dlg.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
         dlg.show()
+    }
+
+    // ------------------------------------------------------------ búsqueda
+
+    private fun buildSearchRow() {
+        searchRow = Ui.row(this).apply {
+            setPadding(dp(4), dp(6), dp(4), dp(6))
+            visibility = View.GONE
+        }
+        searchRow.addView(Ui.iconButton(this, R.drawable.ic_back, "Cerrar búsqueda", Ui.TEXT_SOFT) { closeSearch() })
+        val field = Ui.row(this).apply {
+            background = Ui.round(this@ViewerActivity, Ui.FIELD, 12f, Ui.ACTIVE_BORDER, 1f)
+            setPadding(dp(12), 0, dp(10), 0)
+        }
+        searchField = EditText(this).apply {
+            background = null
+            hint = "Buscar en el documento"
+            setHintTextColor(Ui.MUTED)
+            setTextColor(Ui.TEXT)
+            textSize = 16f
+            isSingleLine = true
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            setPadding(0, 0, dp(6), 0)
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    if (!searching) return
+                    handler.removeCallbacks(searchRun)
+                    handler.postDelayed(searchRun, if (docKind == Kind.PDF) 500L else 250L)
+                }
+            })
+            setOnEditorActionListener { _, action, _ ->
+                if (action == EditorInfo.IME_ACTION_SEARCH) {
+                    hideKeyboard()
+                    findStep(1)
+                    true
+                } else false
+            }
+        }
+        field.addView(searchField, Ui.lp(0, dp(44), 1f))
+        searchCount = Ui.text(this, "", 13f, Ui.ACTIVE_TEXT, bold = true)
+        field.addView(searchCount)
+        searchRow.addView(field, Ui.lp(0, Ui.WRAP, 1f).apply {
+            marginStart = dp(2)
+            marginEnd = dp(2)
+        })
+        searchRow.addView(Ui.iconButton(this, R.drawable.ic_up, "Resultado anterior") { findStep(-1) })
+        searchRow.addView(Ui.iconButton(this, R.drawable.ic_down, "Resultado siguiente") { findStep(1) })
+    }
+
+    private fun canSearch(): Boolean {
+        val k = docKind ?: return false
+        if (docFile == null || k == Kind.IMAGE || k == Kind.OLD_OFFICE || k == Kind.OTHER) return false
+        return k != Kind.PDF || Build.VERSION.SDK_INT >= 35
+    }
+
+    private fun openSearch() {
+        if (!canSearch() || searching) return
+        recordJump()
+        searching = true
+        titleRow.visibility = View.GONE
+        searchRow.visibility = View.VISIBLE
+        applyBars(true, true)
+        searchField.requestFocus()
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(searchField, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun closeSearch() {
+        if (!searching) return
+        searching = false
+        searchToken++
+        handler.removeCallbacks(searchRun)
+        hideKeyboard()
+        searchField.setText("")
+        searchCount.text = ""
+        webView.evaluateJavascript("window.findClear&&findClear()", null)
+        searchRow.visibility = View.GONE
+        titleRow.visibility = View.VISIBLE
+    }
+
+    private fun hideKeyboard() {
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(searchField.windowToken, 0)
+    }
+
+    private fun runSearch() {
+        if (!searching) return
+        val q = searchField.text.toString().trim()
+        if (docKind == Kind.PDF) {
+            pdfSearch(q)
+        } else {
+            webView.evaluateJavascript("window.findText&&findText(" + JSONObject.quote(q) + ")", null)
+        }
+    }
+
+    private fun findStep(d: Int) {
+        if (!searching || searchField.text.isNullOrBlank()) return
+        webView.evaluateJavascript("window.findStep&&findStep($d)", null)
+    }
+
+    private fun showCount(total: Int, cur: Int) {
+        searchCount.text = when {
+            searchField.text.isNullOrBlank() -> ""
+            total == 0 -> "Sin resultados"
+            total >= MAX_PDF_HITS -> "$cur de $total+"
+            else -> "$cur de $total"
+        }
+    }
+
+    /** Busca en todas las páginas del PDF con el buscador de Android (15 o superior). */
+    private fun pdfSearch(q: String) {
+        val token = ++searchToken
+        if (q.isEmpty()) {
+            webView.evaluateJavascript("window.findClear&&findClear()", null)
+            searchCount.text = ""
+            return
+        }
+        if (Build.VERSION.SDK_INT < 35) return
+        searchCount.text = "Buscando…"
+        val sizes = pageSizes
+        Thread {
+            val out = JSONArray()
+            var total = 0
+            for (i in sizes.indices) {
+                if (token != searchToken || closed) return@Thread
+                val matches = synchronized(pdfLock) {
+                    val r = pdf ?: return@Thread
+                    try {
+                        r.openPage(i).use { page -> page.searchText(q) }
+                    } catch (_: Throwable) {
+                        null
+                    }
+                } ?: continue
+                val pw = sizes[i][0].coerceAtLeast(1).toFloat()
+                val ph = sizes[i][1].coerceAtLeast(1).toFloat()
+                for (m in matches) {
+                    val rects = JSONArray()
+                    for (b in m.bounds) {
+                        rects.put(
+                            JSONArray()
+                                .put((b.left / pw).toDouble())
+                                .put((b.top / ph).toDouble())
+                                .put((b.width() / pw).toDouble())
+                                .put((b.height() / ph).toDouble())
+                        )
+                    }
+                    if (rects.length() == 0) continue
+                    out.put(JSONArray().put(i).put(rects))
+                    total++
+                    if (total >= MAX_PDF_HITS) break
+                }
+                if (total >= MAX_PDF_HITS) break
+            }
+            val noText = total == 0 && !pdfHasAnyText()
+            runOnUiThread {
+                if (isDestroyed || token != searchToken) return@runOnUiThread
+                if (noText) {
+                    searchCount.text = "Sin texto"
+                    Toast.makeText(
+                        this, "Este PDF no tiene texto que se pueda buscar. Parece una imagen escaneada.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@runOnUiThread
+                }
+                webView.evaluateJavascript("window.setPdfHits&&setPdfHits($out)", null)
+            }
+        }.start()
+    }
+
+    /** ¿El PDF tiene texto? (se revisan las primeras páginas). */
+    private fun pdfHasAnyText(): Boolean {
+        pdfHasText?.let { return it }
+        if (Build.VERSION.SDK_INT < 35) return true
+        var found = false
+        val n = min(pageSizes.size, 6)
+        for (i in 0 until n) {
+            val has = synchronized(pdfLock) {
+                val r = pdf ?: return true
+                try {
+                    r.openPage(i).use { page -> page.textContents.any { it.text.isNotBlank() } }
+                } catch (_: Throwable) {
+                    true
+                }
+            }
+            if (has) {
+                found = true
+                break
+            }
+        }
+        pdfHasText = found
+        return found
+    }
+
+    // ------------------------------------------------------------ historial de saltos
+
+    private fun recordJump() {
+        val paged = docKind == Kind.PDF || docKind == Kind.PPTX
+        val j = Jump(if (paged) currentPage else 0, scrollFrac, System.currentTimeMillis())
+        val last = history.lastOrNull()
+        if (last != null && last.page == j.page && abs(last.frac - j.frac) < 0.01f) return
+        history.add(j)
+        if (history.size > 20) history.removeAt(0)
+    }
+
+    private fun goPage(n: Int) {
+        webView.evaluateJavascript("window.goPage&&goPage($n)", null)
+    }
+
+    private fun jumpLabel(j: Jump): String = when {
+        j.page > 0 && docKind == Kind.PPTX -> "Diapositiva ${j.page}"
+        j.page > 0 -> "Página ${j.page}"
+        else -> "Al ${(j.frac * 100).roundToInt()} % del documento"
+    }
+
+    // ------------------------------------------------------------ panel lateral
+
+    private fun panelTabs(): List<String> = when (docKind) {
+        Kind.PDF -> listOf("Páginas", "Historial")
+        Kind.PPTX -> listOf("Diapositivas", "Historial")
+        Kind.DOCX -> listOf("Índice", "Historial")
+        Kind.XLSX -> listOf("Hojas", "Historial")
+        else -> listOf("Historial")
+    }
+
+    private fun openPanel() {
+        if (panel != null || docFile == null) return
+        if (searching) closeSearch()
+        val ov = FrameLayout(this)
+        val dim = View(this).apply {
+            setBackgroundColor(0x99000000.toInt())
+            alpha = 0f
+            setOnClickListener { closePanel() }
+        }
+        ov.addView(dim, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+        panelWidth = min(dp(316), resources.displayMetrics.widthPixels - dp(56))
+        val d = Ui.column(this).apply {
+            background = GradientDrawable().apply {
+                setColor(Ui.SURFACE)
+                val r = dp(20).toFloat()
+                cornerRadii = floatArrayOf(0f, 0f, r, r, r, r, 0f, 0f)
+            }
+            isClickable = true
+            translationX = -panelWidth.toFloat()
+            elevation = dp(12).toFloat()
+        }
+
+        val head = Ui.row(this).apply {
+            gravity = Gravity.TOP
+            setPadding(dp(20), dp(18), dp(8), dp(12))
+        }
+        val texts = Ui.column(this)
+        texts.addView(Ui.text(this, displayName, 17f, Ui.TEXT, bold = true).apply { maxLines = 2 })
+        texts.addView(Ui.singleLine(Ui.text(this, subtitleView.text.toString(), 13f, Ui.MUTED)), Ui.lp(Ui.MATCH, Ui.WRAP).apply {
+            topMargin = dp(4)
+        })
+        head.addView(texts, Ui.lp(0, Ui.WRAP, 1f))
+        head.addView(Ui.iconButton(this, R.drawable.ic_close, "Cerrar panel", Ui.MUTED) { closePanel() })
+        d.addView(head, Ui.lp(Ui.MATCH, Ui.WRAP))
+
+        val tabs = panelTabs()
+        val seg = Ui.row(this).apply {
+            background = Ui.round(this@ViewerActivity, Ui.FIELD, 12f, Ui.BORDER_SOFT, 1f)
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+        }
+        val content = FrameLayout(this)
+        val tabViews = ArrayList<TextView>()
+        tabs.forEachIndexed { i, label ->
+            val tv = Ui.text(this, label, 13.5f, Ui.MUTED).apply {
+                gravity = Gravity.CENTER
+                isClickable = true
+                setOnClickListener {
+                    tabViews.forEachIndexed { j, t -> styleSeg(t, j == i) }
+                    showPanelTab(label, content)
+                }
+            }
+            seg.addView(tv, Ui.lp(0, dp(38), 1f))
+            tabViews.add(tv)
+        }
+        tabViews.forEachIndexed { j, t -> styleSeg(t, j == 0) }
+        d.addView(seg, Ui.lp(Ui.MATCH, Ui.WRAP).apply { setMargins(dp(16), 0, dp(16), dp(4)) })
+        d.addView(content, Ui.lp(Ui.MATCH, 0, 1f))
+
+        ov.addView(d, FrameLayout.LayoutParams(panelWidth, Ui.MATCH, Gravity.START))
+        rootView.addView(ov, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+        panel = ov
+        drawer = d
+        panelContent = content
+        d.animate().translationX(0f).setDuration(200).start()
+        dim.animate().alpha(1f).setDuration(200).start()
+        showPanelTab(tabs[0], content)
+    }
+
+    private fun styleSeg(t: TextView, on: Boolean) {
+        t.background = if (on) Ui.round(this, Ui.ACTIVE_BG, 9f) else null
+        t.setTextColor(if (on) Ui.ACTIVE_TEXT else Ui.MUTED)
+        t.typeface = if (on) Ui.BOLD else Ui.REGULAR
+    }
+
+    private fun closePanel() {
+        val ov = panel ?: return
+        val d = drawer
+        panel = null
+        drawer = null
+        panelContent = null
+        val w = thumbsWeb
+        thumbsWeb = null
+        val done = Runnable {
+            rootView.removeView(ov)
+            w?.destroy()
+        }
+        if (d != null) {
+            d.animate().translationX(-panelWidth.toFloat()).setDuration(180).withEndAction(done).start()
+            ov.getChildAt(0)?.animate()?.alpha(0f)?.setDuration(180)?.start()
+        } else {
+            done.run()
+        }
+    }
+
+    private fun showPanelTab(label: String, content: FrameLayout) {
+        content.removeAllViews()
+        thumbsWeb?.let {
+            thumbsWeb = null
+            it.destroy()
+        }
+        when (label) {
+            "Páginas" -> pdfGrid(content)
+            "Diapositivas" -> slideThumbs(content)
+            "Índice" -> outlineList(content)
+            "Hojas" -> sheetsList(content)
+            else -> historyList(content)
+        }
+    }
+
+    private fun panelNote(content: FrameLayout, text: String) {
+        content.addView(Ui.text(this, text, 14f, Ui.MUTED).apply {
+            setPadding(dp(20), dp(18), dp(20), 0)
+            setLineSpacing(0f, 1.25f)
+        }, FrameLayout.LayoutParams(Ui.MATCH, Ui.WRAP))
+    }
+
+    /** Lista desplazable para el índice, las hojas y el historial. */
+    private fun panelList(content: FrameLayout): LinearLayout {
+        val sv = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            clipToPadding = false
+        }
+        val col = Ui.column(this).apply { setPadding(dp(8), dp(10), dp(8), dp(24)) }
+        sv.addView(col, ViewGroup.LayoutParams(Ui.MATCH, Ui.WRAP))
+        content.addView(sv, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+        return col
+    }
+
+    private fun panelRow(col: LinearLayout, text: String, sizeSp: Float, color: Int, bold: Boolean,
+                         indentDp: Int, sub: String?, icon: Int?, active: Boolean, onClick: () -> Unit) {
+        val r = Ui.row(this).apply {
+            setPadding(dp(12 + indentDp), dp(11), dp(12), dp(11))
+            background = Ui.ripple(this@ViewerActivity, if (active) Ui.round(this@ViewerActivity, Ui.ACTIVE_BG, 12f) else null, 12f)
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        if (icon != null) r.addView(Ui.icon(this, icon, Ui.FOLDER, 18), Ui.lp(dp(18), dp(18)).apply { marginEnd = dp(12) })
+        val texts = Ui.column(this)
+        texts.addView(Ui.text(this, text, sizeSp, if (active) Ui.ACTIVE_TEXT else color, bold).apply { maxLines = 2 })
+        if (sub != null) texts.addView(Ui.text(this, sub, 12.5f, Ui.MUTED), Ui.lp(Ui.WRAP, Ui.WRAP).apply { topMargin = dp(2) })
+        r.addView(texts, Ui.lp(0, Ui.WRAP, 1f))
+        col.addView(r, Ui.lp(Ui.MATCH, Ui.WRAP))
+    }
+
+    private fun outlineList(content: FrameLayout) {
+        webView.evaluateJavascript("window.getOutline?getOutline():'[]'") { res ->
+            if (panelContent !== content) return@evaluateJavascript
+            val arr = try {
+                JSONArray(JSONTokener(res).nextValue() as String)
+            } catch (_: Exception) {
+                JSONArray()
+            }
+            if (arr.length() == 0) {
+                panelNote(content, "Este documento no tiene títulos. El índice se arma con los títulos de Word (Título 1, 2 y 3).")
+                return@evaluateJavascript
+            }
+            val col = panelList(content)
+            for (k in 0 until arr.length()) {
+                val o = arr.getJSONObject(k)
+                val level = o.optInt("l", 1)
+                val idx = o.optInt("i")
+                panelRow(
+                    col, o.optString("t"),
+                    if (level == 1) 15f else 14f,
+                    if (level == 1) Ui.TEXT else if (level == 2) Ui.TEXT_SOFT else Ui.MUTED,
+                    level == 1, (level - 1) * 16, null, null, false
+                ) {
+                    recordJump()
+                    webView.evaluateJavascript("window.goOutline&&goOutline($idx)", null)
+                    closePanel()
+                }
+            }
+        }
+    }
+
+    private fun sheetsList(content: FrameLayout) {
+        webView.evaluateJavascript("window.getSheets?getSheets():'{}'") { res ->
+            if (panelContent !== content) return@evaluateJavascript
+            val o = try {
+                JSONObject(JSONTokener(res).nextValue() as String)
+            } catch (_: Exception) {
+                JSONObject()
+            }
+            val names = o.optJSONArray("names") ?: JSONArray()
+            val on = o.optInt("on", 0)
+            if (names.length() == 0) {
+                panelNote(content, "Este libro tiene una sola hoja.")
+                return@evaluateJavascript
+            }
+            val col = panelList(content)
+            for (k in 0 until names.length()) {
+                panelRow(col, names.optString(k), 15f, Ui.TEXT, false, 0, null, R.drawable.ic_file_xls, k == on) {
+                    webView.evaluateJavascript("window.showSheet&&showSheet($k)", null)
+                    closePanel()
+                }
+            }
+        }
+    }
+
+    private fun historyList(content: FrameLayout) {
+        if (history.isEmpty()) {
+            panelNote(
+                content,
+                "Aquí aparecen los lugares donde estabas antes de saltar a otra parte del documento " +
+                    "(con el buscador, el índice o «Ir a la página»), para que puedas volver."
+            )
+            return
+        }
+        val col = panelList(content)
+        for (j in history.reversed()) {
+            panelRow(col, jumpLabel(j), 15f, Ui.TEXT, false, 0, "Antes del salto de las " + Ui.shortDate(j.time),
+                R.drawable.ic_history, false) {
+                recordJump()
+                if (j.page > 0) goPage(j.page)
+                else webView.evaluateJavascript("window.goFrac&&goFrac(${j.frac})", null)
+                closePanel()
+            }
+        }
+    }
+
+    /** Miniaturas de las diapositivas: la misma presentación cargada en pequeño. */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun slideThumbs(content: FrameLayout) {
+        val html = docDir?.let { File(it, "vista.html") }
+        if (html == null || !html.exists()) {
+            panelNote(content, "No se pudieron cargar las diapositivas.")
+            return
+        }
+        val w = WebView(this)
+        w.settings.apply {
+            javaScriptEnabled = true
+            allowFileAccess = true
+            allowFileAccessFromFileURLs = true
+            allowContentAccess = false
+            blockNetworkLoads = true
+            setSupportZoom(false)
+            textZoom = 100
+        }
+        w.setBackgroundColor(Ui.SURFACE)
+        w.addJavascriptInterface(ThumbBridge(), "Android")
+        w.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String?) {
+                view.evaluateJavascript("window.enterThumbs&&enterThumbs();window.markThumb&&markThumb($currentPage)", null)
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
+        }
+        thumbsWeb = w
+        content.addView(w, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+        w.loadUrl(Uri.fromFile(html).toString())
+    }
+
+    /** Miniaturas de las páginas del PDF, en dos columnas. */
+    private fun pdfGrid(content: FrameLayout) {
+        val sizes = pageSizes
+        if (sizes.isEmpty()) {
+            panelNote(content, "No se pudieron cargar las páginas.")
+            return
+        }
+        val pad = dp(16)
+        val gap = dp(12)
+        val colW = (panelWidth - pad * 2 - gap) / 2
+        val grid = GridView(this).apply {
+            numColumns = 2
+            horizontalSpacing = gap
+            verticalSpacing = dp(14)
+            stretchMode = GridView.STRETCH_COLUMN_WIDTH
+            setPadding(pad, dp(12), pad, dp(24))
+            clipToPadding = false
+            selector = ColorDrawable(Color.TRANSPARENT)
+            isVerticalScrollBarEnabled = false
+        }
+        grid.adapter = object : BaseAdapter() {
+            override fun getCount(): Int = sizes.size
+            override fun getItem(position: Int): Any = position
+            override fun getItemId(position: Int): Long = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+                val cell = (convertView as? LinearLayout) ?: Ui.column(this@ViewerActivity).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    val img = ImageView(this@ViewerActivity).apply {
+                        scaleType = ImageView.ScaleType.FIT_XY
+                        setBackgroundColor(Color.WHITE)
+                    }
+                    addView(img, LinearLayout.LayoutParams(colW, colW))
+                    addView(Ui.text(this@ViewerActivity, "", 12f, Ui.MUTED).apply { gravity = Gravity.CENTER },
+                        LinearLayout.LayoutParams(Ui.MATCH, Ui.WRAP).apply { topMargin = dp(6) })
+                }
+                val img = cell.getChildAt(0) as ImageView
+                val num = cell.getChildAt(1) as TextView
+                val s = sizes[position]
+                val h = (colW.toLong() * s[1] / s[0].coerceAtLeast(1)).toInt().coerceIn(dp(40), colW * 3)
+                img.layoutParams = LinearLayout.LayoutParams(colW, h)
+                val cur = position + 1 == currentPage
+                img.foreground = if (cur) Ui.round(this@ViewerActivity, Color.TRANSPARENT, 2f, Ui.ACCENT, 2f) else null
+                num.text = (position + 1).toString()
+                num.setTextColor(if (cur) Ui.ACTIVE_TEXT else Ui.MUTED)
+                num.typeface = if (cur) Ui.BOLD else Ui.REGULAR
+                loadPdfThumb(position, img)
+                return cell
+            }
+        }
+        grid.setOnItemClickListener { _, _, position, _ ->
+            recordJump()
+            goPage(position + 1)
+            closePanel()
+        }
+        content.addView(grid, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH))
+        grid.setSelection(max(0, currentPage - 3))
+    }
+
+    private fun loadPdfThumb(i: Int, iv: ImageView) {
+        iv.tag = i
+        val cached = pdfThumbs.get(i)
+        if (cached != null) {
+            iv.setImageBitmap(cached)
+            return
+        }
+        iv.setImageDrawable(null)
+        try {
+            thumbExec.execute {
+                if (closed) return@execute
+                var stillWanted = true
+                runOnUiThreadSync { stillWanted = iv.tag == i }
+                if (!stillWanted) return@execute
+                val bmp = renderThumb(i) ?: return@execute
+                pdfThumbs.put(i, bmp)
+                runOnUiThread { if (iv.tag == i) iv.setImageBitmap(bmp) }
+            }
+        } catch (_: RejectedExecutionException) {
+        }
+    }
+
+    /** Ejecuta algo corto en el hilo principal y espera a que termine. */
+    private fun runOnUiThreadSync(block: () -> Unit) {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        runOnUiThread {
+            try {
+                block()
+            } finally {
+                latch.countDown()
+            }
+        }
+        latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    private fun renderThumb(i: Int): Bitmap? {
+        val dir = docDir ?: return null
+        val f = File(File(dir, "pages"), "t$i.jpg")
+        if (f.exists()) {
+            try {
+                android.graphics.BitmapFactory.decodeFile(f.path)?.let { return it }
+            } catch (_: Throwable) {
+            }
+        }
+        return synchronized(pdfLock) {
+            val r = pdf
+            if (r == null || closed || i >= r.pageCount) {
+                null
+            } else {
+                try {
+                    r.openPage(i).use { page ->
+                        val w = 240
+                        val h = (page.height.toLong() * w / page.width.coerceAtLeast(1)).toInt().coerceIn(1, 1000)
+                        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        bmp.eraseColor(Color.WHITE)
+                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        try {
+                            f.parentFile?.mkdirs()
+                            FileOutputStream(f).use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+                        } catch (_: Exception) {
+                        }
+                        bmp
+                    }
+                } catch (_: Throwable) {
+                    null
+                }
+            }
+        }
     }
 
     private fun showMore(anchor: View) {
@@ -943,10 +1634,24 @@ class ViewerActivity : Activity() {
 
     // ------------------------------------------------------------- cierre
 
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        when {
+            panel != null -> closePanel()
+            searching -> closeSearch()
+            else -> super.onBackPressed()
+        }
+    }
+
     override fun onDestroy() {
         closed = true
+        searchToken++
         handler.removeCallbacksAndMessages(null)
         worker.shutdownNow()
+        thumbExec.shutdownNow()
+        thumbsWeb?.destroy()
+        thumbsWeb = null
         synchronized(pdfLock) {
             try {
                 pdf?.close()
@@ -972,5 +1677,8 @@ class ViewerActivity : Activity() {
         /** Tipos que cambian con el modo oscuro. Los PDF, PowerPoint e imágenes siempre se ven como el original. */
         private val DARK_KINDS = setOf(Kind.DOCX, Kind.XLSX, Kind.CSV, Kind.TEXT)
         private val DARK_CLASSES = setOf("docx", "sheet", "txt")
+        /** Tipos con panel lateral (miniaturas, índice u hojas, e historial). */
+        private val PANEL_KINDS = setOf(Kind.PDF, Kind.PPTX, Kind.DOCX, Kind.XLSX)
+        private const val MAX_PDF_HITS = 2000
     }
 }
