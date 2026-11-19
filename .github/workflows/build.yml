@@ -30,18 +30,18 @@ jobs:
           ./gradlew assembleRelease --stacktrace
 
       - name: Renombrar el APK
-        run: cp app/build/outputs/apk/release/app-release.apk "Lector-v0.3.${{ github.run_number }}.apk"
+        run: cp app/build/outputs/apk/release/app-release.apk "Lector-v0.4.${{ github.run_number }}.apk"
 
       - name: Guardar el APK
         uses: actions/upload-artifact@v4
         with:
-          name: Lector-v0.3.${{ github.run_number }}
-          path: Lector-v0.3.${{ github.run_number }}.apk
+          name: Lector-v0.4.${{ github.run_number }}
+          path: Lector-v0.4.${{ github.run_number }}.apk
 
       - name: Publicar en Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.3.${{ github.run_number }}
-          name: Lector v0.3.${{ github.run_number }}
+          tag_name: v0.4.${{ github.run_number }}
+          name: Lector v0.4.${{ github.run_number }}
           body: APK generado automáticamente. Descárgalo en el celular e instálalo.
-          files: Lector-v0.3.${{ github.run_number }}.apk
+          files: Lector-v0.4.${{ github.run_number }}.apk

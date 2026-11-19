@@ -1,19 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Logo E: hoja lavanda con una órbita violeta. Escalado para caber en la zona segura del ícono. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Hoja -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M37,27h24l12,12v41a2,2 0,0 1,-2,2H37a2,2 0,0 1,-2,-2V29a2,2 0,0 1,2,-2z" />
-    <!-- Esquina doblada -->
-    <path
-        android:fillColor="#BBD6FB"
-        android:pathData="M61,27v10a2,2 0,0 0,2,2h10z" />
-    <!-- Renglones -->
-    <path
-        android:fillColor="#1565C0"
-        android:pathData="M41,47h26v3H41zM41,55h26v3H41zM41,63h26v3H41zM41,71h16v3H41z" />
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.74"
+        android:scaleY="0.74">
+        <!-- Mitad trasera de la órbita -->
+        <group
+            android:pivotX="54"
+            android:pivotY="58"
+            android:rotation="-20">
+            <path
+                android:fillColor="#00000000"
+                android:strokeColor="#4A32B8"
+                android:strokeWidth="6"
+                android:pathData="M12,58a42,12 0 1,0 84,0a42,12 0 1,0 -84,0z" />
+        </group>
+        <!-- Hoja -->
+        <path android:pathData="M36,22h26l14,14v46a4,4 0 0,1 -4,4H36a4,4 0 0,1 -4,-4V26a4,4 0 0,1 4,-4z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="32"
+                    android:startY="22"
+                    android:endX="76"
+                    android:endY="86"
+                    android:startColor="#F3F0FF"
+                    android:endColor="#B09EFF" />
+            </aapt:attr>
+        </path>
+        <!-- Esquina doblada -->
+        <path
+            android:fillColor="#7B5CFF"
+            android:pathData="M62,22v10a4,4 0 0,0 4,4h10z" />
+        <!-- Renglones -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#1E1638"
+            android:strokeWidth="4"
+            android:strokeLineCap="round"
+            android:pathData="M40,46h26M40,54h26M40,62h18" />
+        <!-- Mitad delantera de la órbita -->
+        <group
+            android:pivotX="54"
+            android:pivotY="58"
+            android:rotation="-20">
+            <path
+                android:fillColor="#00000000"
+                android:strokeColor="#8F72FF"
+                android:strokeWidth="7"
+                android:strokeLineCap="round"
+                android:pathData="M12,58a42,12 0 0,0 84,0" />
+        </group>
+    </group>
 </vector>

@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Tema claro u oscuro según la configuración del teléfono -->
+    <!-- Visor: tema claro u oscuro según la configuración del teléfono -->
     <style name="Theme.Lector" parent="@android:style/Theme.DeviceDefault.DayNight" />
+
+    <!-- Pantalla de inicio: fondo grafito y acento lavanda -->
+    <style name="Theme.Lector.Explorer" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/grafito</item>
+        <item name="android:statusBarColor">@color/grafito</item>
+        <item name="android:navigationBarColor">@color/grafito</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:colorAccent">@color/lavanda</item>
+    </style>
 </resources>

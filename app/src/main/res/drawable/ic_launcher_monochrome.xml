@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Versión de un solo color, para los íconos temáticos del sistema. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.74"
+        android:scaleY="0.74">
+        <group
+            android:pivotX="54"
+            android:pivotY="58"
+            android:rotation="-20">
+            <path
+                android:fillColor="#00000000"
+                android:strokeAlpha="0.5"
+                android:strokeColor="#FFFFFFFF"
+                android:strokeWidth="6"
+                android:pathData="M12,58a42,12 0 1,0 84,0a42,12 0 1,0 -84,0z" />
+        </group>
+        <!-- Hoja con los renglones recortados -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M36,22h26l14,14v46a4,4 0 0,1 -4,4H36a4,4 0 0,1 -4,-4V26a4,4 0 0,1 4,-4z M40,44h26v4H40z M40,52h26v4H40z M40,60h18v4H40z" />
+        <group
+            android:pivotX="54"
+            android:pivotY="58"
+            android:rotation="-20">
+            <path
+                android:fillColor="#00000000"
+                android:strokeColor="#FFFFFFFF"
+                android:strokeWidth="7"
+                android:strokeLineCap="round"
+                android:pathData="M12,58a42,12 0 0,0 84,0" />
+        </group>
+    </group>
+</vector>

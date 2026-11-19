@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="docs" path="docs/" />
+    <!-- Copias de archivos que llegaron desde otras apps, para poder reabrirlos desde Recientes -->
+    <files-path name="copias" path="copias/" />
 </paths>

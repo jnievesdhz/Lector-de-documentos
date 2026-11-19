@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.ImageDecoder
 import android.graphics.drawable.GradientDrawable
 import android.graphics.pdf.PdfRenderer
@@ -20,6 +21,7 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.view.Gravity
 import android.view.Menu
+import android.view.PixelCopy
 import android.view.MenuItem
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -40,6 +42,7 @@ import java.io.IOException
 import java.nio.charset.Charset
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
@@ -57,6 +60,10 @@ class ViewerActivity : Activity() {
     @Volatile private var docName: String = "archivo"
     @Volatile private var docMime: String = "application/octet-stream"
     @Volatile private var docKind: Kind? = null
+
+    // Entrada del historial (recientes) y miniatura
+    @Volatile private var entryId: String? = null
+    @Volatile private var wantCapture = false
 
     // Posición de lectura (0 = inicio, 1 = final), para volver al mismo punto al girar el teléfono
     @Volatile private var scrollFrac = 0f
@@ -137,6 +144,7 @@ class ViewerActivity : Activity() {
         outState.putString("title", title?.toString())
         outState.putInt("rw", renderWidth)
         outState.putFloat("frac", scrollFrac)
+        outState.putString("entry", entryId)
     }
 
     private fun restore(b: Bundle): Boolean {
@@ -152,6 +160,7 @@ class ViewerActivity : Activity() {
         docKind = kind
         renderWidth = b.getInt("rw", renderWidth)
         restoreFrac = b.getFloat("frac", 0f)
+        entryId = b.getString("entry")
         title = b.getString("title") ?: docName
         invalidateOptionsMenu()
         if (kind == Kind.PDF) {
@@ -207,6 +216,12 @@ class ViewerActivity : Activity() {
             docFile = file
             docName = file.name
             docMime = mime
+            // Anota el archivo en Recientes (si llegó desde otra app, guarda una copia para reabrirlo)
+            entryId = try {
+                Library.record(this, uri, name, mime, file, intent.getStringExtra(EXTRA_ENTRY))
+            } catch (_: Throwable) {
+                null
+            }
             runOnUiThread {
                 if (!isDestroyed) {
                     title = name
@@ -223,6 +238,7 @@ class ViewerActivity : Activity() {
                 )
                 return
             }
+            wantCapture = entryId != null && kind in CAPTURE_KINDS
             when (kind) {
                 Kind.PDF -> openPdf(file, dir)
                 Kind.DOCX -> writeAndLoad(dir, Html.page(DocxToHtml.convert(file, dir), "", "docx"))
@@ -301,6 +317,8 @@ class ViewerActivity : Activity() {
             showMessageAsync("El PDF no tiene páginas.")
             return
         }
+
+        entryId?.let { makePdfThumb(it) }
 
         val dm = resources.displayMetrics
         renderWidth = (min(dm.widthPixels, dm.heightPixels) * 2).coerceIn(1200, 2200)
@@ -384,6 +402,75 @@ class ViewerActivity : Activity() {
         }
     }
 
+    /** Miniatura de la primera página para la cuadrícula de Recientes. */
+    private fun makePdfThumb(id: String) {
+        try {
+            synchronized(pdfLock) {
+                val r = pdf ?: return
+                if (closed || r.pageCount == 0) return
+                r.openPage(0).use { p ->
+                    val h = 300
+                    val w = (p.width.toLong() * h / p.height.coerceAtLeast(1)).toInt().coerceIn(1, 600)
+                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    bmp.eraseColor(Color.WHITE)
+                    p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    Library.saveThumb(this, id, bmp)
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Miniatura de imagen pequeña. */
+    private fun makeImageThumb(id: String, file: File) {
+        try {
+            val bmp = ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
+                val s = info.size
+                val scale = 400f / max(s.width, s.height).coerceAtLeast(1)
+                if (scale < 1f) {
+                    decoder.setTargetSize(
+                        (s.width * scale).toInt().coerceAtLeast(1),
+                        (s.height * scale).toInt().coerceAtLeast(1)
+                    )
+                }
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            }
+            Library.saveThumb(this, id, bmp)
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Toma una foto de la parte de arriba del documento ya dibujado (Word, Excel, PowerPoint, texto). */
+    private fun captureThumb() {
+        val id = entryId ?: return
+        if (isDestroyed || isFinishing) return
+        val w = webView.width
+        val h = min(webView.height, (w * 0.72f).toInt())
+        if (w <= 0 || h <= 0) return
+        val loc = IntArray(2)
+        webView.getLocationInWindow(loc)
+        val outW = 400
+        val outH = (outW * h / w.toFloat()).toInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+        try {
+            PixelCopy.request(
+                window,
+                Rect(loc[0], loc[1], loc[0] + w, loc[1] + h),
+                bmp,
+                { result ->
+                    if (result == PixelCopy.SUCCESS) {
+                        Thread { Library.saveThumb(this, id, bmp) }.start()
+                    } else {
+                        bmp.recycle()
+                    }
+                },
+                handler
+            )
+        } catch (_: Throwable) {
+            bmp.recycle()
+        }
+    }
+
     private fun showPageNumber(n: Int) {
         if (pageCount <= 1) return
         pageLabel.text = "$n / $pageCount"
@@ -407,6 +494,7 @@ class ViewerActivity : Activity() {
             bmp.recycle()
             shown = converted
         }
+        entryId?.let { makeImageThumb(it, shown) }
         val body = "<div class=\"imgwrap\"><img src=\"" + Uri.encode(shown.name) + "\" alt=\"\"></div>"
         writeAndLoad(dir, Html.page(body, "", "img"))
     }
@@ -468,6 +556,10 @@ class ViewerActivity : Activity() {
         w.addJavascriptInterface(Bridge(), "Android")
         w.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String?) {
+                if (wantCapture && url != null && url.startsWith("file:")) {
+                    wantCapture = false
+                    view.postDelayed({ captureThumb() }, 1500)
+                }
                 val f = restoreFrac
                 if (f != null && url != null && url.startsWith("file:")) {
                     restoreFrac = null
@@ -620,6 +712,9 @@ class ViewerActivity : Activity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     companion object {
+        /** Id de la entrada de Recientes cuando el archivo se abre desde la pantalla de inicio. */
+        const val EXTRA_ENTRY = "com.jnieves.lector.ENTRY"
+        private val CAPTURE_KINDS = setOf(Kind.DOCX, Kind.XLSX, Kind.PPTX, Kind.CSV, Kind.TEXT)
         private const val MENU_SHARE = 1
         private const val MENU_OPEN_WITH = 2
     }

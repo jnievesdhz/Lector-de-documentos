@@ -4,6 +4,9 @@ App Android personal para ver documentos sin anuncios. No pide permiso de intern
 
 ## Qué hace
 
+- Pantalla de inicio con **Recientes** (agrupados por fecha), **Favoritos** y **Carpetas**, en lista o en cuadrícula con miniaturas
+- Filtros por tipo, búsqueda por nombre y menú de cada archivo (abrir, favoritos, compartir, abrir con, detalles, quitar)
+- Los archivos que llegan desde otras apps (WhatsApp, Compartir) se guardan como copia para poder reabrirlos desde Recientes
 - Abre PDF (zoom con dos dedos, páginas que cargan a medida que bajas, número de página)
 - Abre Word (.docx): títulos, formato de texto, listas, tablas, imágenes, enlaces y notas al pie
 - Abre Excel (.xlsx): todas las hojas con pestañas, fechas, monedas, porcentajes, colores y celdas combinadas
@@ -38,4 +41,4 @@ Las versiones nuevas se instalan encima de la anterior (están firmadas con la m
 
 ## Próximas etapas
 
-4. Modo oscuro para documentos, búsqueda de texto, archivos recientes
+4. Interfaz nueva (en curso): visor con barras que se esconden y herramientas abajo, modo oscuro para documentos, búsqueda de texto, pestañas y panel lateral
