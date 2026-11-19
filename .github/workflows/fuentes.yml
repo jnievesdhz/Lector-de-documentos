@@ -23,8 +23,11 @@ jobs:
           set -x
           rm -rf fuentes-externas && mkdir -p fuentes-externas/akasia fuentes-externas/selawik /tmp/fx/a /tmp/fx/s
           cd /tmp/fx/a
-          curl -fsSL https://codeberg.org/api/v1/repos/bloudraad/akasia/releases/latest -o rel.json
-          cat rel.json | jq '{tag_name, assets: [.assets[] | {name, size, browser_download_url}]}'
+          API=https://codeberg.org/api/v1/repos/bloudraad/akasia
+          curl -fsSL "$API/releases?limit=20" -o rels.json
+          jq '[.[] | {tag_name, draft, prerelease, assets: [.assets[] | {name, size, browser_download_url}]}]' rels.json
+          curl -fsSL "$API/tags" | jq '[.[] | {name, zipball_url}]' || true
+          jq '.[0]' rels.json > rel.json
           for u in $(jq -r '.assets[].browser_download_url' rel.json); do curl -fsSLO "$u"; done
           for z in *.zip; do [ -f "$z" ] && unzip -o -q "$z" -d unz; done
           find . -type f \( -iname '*.ttf' -o -iname '*.otf' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/akasia/" \;
