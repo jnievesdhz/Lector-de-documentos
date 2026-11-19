@@ -1,0 +1,38 @@
+{
+  "version": "0.4.1",
+  "cpuFrenada": "4x",
+  "tamanoBytes": {
+    "docx-preview.min.js": 75527,
+    "jszip.min.js": 97781
+  },
+  "resultados": [
+    {
+      "archivo": "1-basico.docx",
+      "ms": 217,
+      "anchoPagina": 614,
+      "paginas": 2,
+      "error": null
+    },
+    {
+      "archivo": "2-notas-al-pie.docx",
+      "ms": 75,
+      "anchoPagina": 603,
+      "paginas": 1,
+      "error": null
+    },
+    {
+      "archivo": "3-trabajo-universitario.docx",
+      "ms": 224,
+      "anchoPagina": 734,
+      "paginas": 3,
+      "error": null
+    },
+    {
+      "archivo": "4-grande-3000-parrafos.docx",
+      "ms": 318,
+      "anchoPagina": 614,
+      "paginas": 1,
+      "error": null
+    }
+  ]
+}
