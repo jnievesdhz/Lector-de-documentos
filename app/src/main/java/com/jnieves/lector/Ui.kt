@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.RippleDrawable
 import android.text.TextUtils
 import android.view.Gravity
@@ -37,6 +38,22 @@ object Ui {
     const val ACTIVE_BORDER = 0xFF3D3850.toInt()
     const val FOLDER = 0xFFB7A6FF.toInt()
     const val DANGER = 0xFFFF9AA8.toInt()
+
+    /** Pesos de letra explícitos: la fuente del sistema de Xiaomi ignora la negrita simple. */
+    val REGULAR: Typeface = Typeface.create(Typeface.DEFAULT, 400, false)
+    val BOLD: Typeface = Typeface.create(Typeface.DEFAULT, 700, false)
+
+    /** Línea de 2 dp pegada al borde de abajo (indicador de la pestaña activa). */
+    fun underline(ctx: Context, color: Int): Drawable {
+        val line = GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(ctx, 1f).toFloat()
+        }
+        return LayerDrawable(arrayOf<Drawable>(line)).apply {
+            setLayerGravity(0, Gravity.BOTTOM or Gravity.FILL_HORIZONTAL)
+            setLayerHeight(0, dp(ctx, 2f))
+        }
+    }
 
     fun dp(ctx: Context, v: Float): Int = (v * ctx.resources.displayMetrics.density).roundToInt()
     fun dp(ctx: Context, v: Int): Int = dp(ctx, v.toFloat())
@@ -74,7 +91,7 @@ object Ui {
             text = s
             textSize = sp
             setTextColor(color)
-            if (bold) typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            typeface = if (bold) BOLD else REGULAR
             includeFontPadding = true
         }
 

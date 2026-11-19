@@ -76,7 +76,7 @@ class MainActivity : Activity() {
 
     private lateinit var searchRow: LinearLayout
     private lateinit var searchField: EditText
-    private val tabViews = ArrayList<Pair<TextView, View>>()
+    private val tabViews = ArrayList<TextView>()
     private lateinit var folderBar: LinearLayout
     private lateinit var folderTitle: TextView
     private lateinit var toolsRow: LinearLayout
@@ -194,20 +194,15 @@ class MainActivity : Activity() {
         tabs.setPadding(dp(20), dp(6), dp(20), 0)
         tabs.gravity = Gravity.BOTTOM
         Tab.values().forEachIndexed { i, t ->
-            val box = Ui.column(this).apply {
+            // La línea lavanda de la pestaña activa se dibuja como fondo del texto
+            val tv = Ui.text(this, t.label, 15f, Ui.MUTED).apply {
+                setPadding(0, dp(12), 0, dp(12))
                 isClickable = true
                 isFocusable = true
-                background = Ui.ripple(this@MainActivity, null, 8f)
                 setOnClickListener { setTab(t) }
             }
-            val tv = Ui.text(this, t.label, 15f, Ui.MUTED).apply {
-                setPadding(0, dp(12), 0, dp(10))
-            }
-            val ind = View(this)
-            box.addView(tv)
-            box.addView(ind, Ui.lp(Ui.MATCH, dp(2)))
-            tabs.addView(box, Ui.lp(Ui.WRAP, Ui.WRAP).apply { if (i > 0) marginStart = dp(26) })
-            tabViews.add(Pair(tv, ind))
+            tabs.addView(tv, Ui.lp(Ui.WRAP, Ui.WRAP).apply { if (i > 0) marginStart = dp(26) })
+            tabViews.add(tv)
         }
         col.addView(tabs, Ui.lp(Ui.MATCH, Ui.WRAP))
         col.addView(View(this).apply { setBackgroundColor(Ui.DIVIDER) }, Ui.lp(Ui.MATCH, dp(1)))
@@ -302,7 +297,7 @@ class MainActivity : Activity() {
         c.background = if (on) Ui.round(this, Ui.ACTIVE_BG, 10f, Ui.ACTIVE_BORDER, 1f)
         else Ui.round(this, Color.TRANSPARENT, 10f, Ui.BORDER, 1f)
         c.setTextColor(if (on) Ui.ACTIVE_TEXT else Ui.TEXT_SOFT)
-        c.typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        c.typeface = if (on) Ui.BOLD else Ui.REGULAR
     }
 
     private fun styleToggle() {
@@ -346,11 +341,11 @@ class MainActivity : Activity() {
 
     private fun refresh() {
         Tab.values().forEachIndexed { i, t ->
-            val (tv, ind) = tabViews[i]
+            val tv = tabViews[i]
             val on = t == tab
             tv.setTextColor(if (on) Ui.TEXT else Ui.MUTED)
-            tv.typeface = if (on) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            ind.background = if (on) Ui.round(this, Ui.ACCENT, 1f) else null
+            tv.typeface = if (on) Ui.BOLD else Ui.REGULAR
+            tv.background = Ui.ripple(this, if (on) Ui.underline(this, Ui.ACCENT) else null, 8f)
         }
         val inFolder = tab == Tab.FOLDERS && stack.isNotEmpty()
         folderBar.visibility = if (inFolder) View.VISIBLE else View.GONE
