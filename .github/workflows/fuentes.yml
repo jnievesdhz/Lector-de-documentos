@@ -24,15 +24,20 @@ jobs:
           rm -rf fuentes-externas && mkdir -p fuentes-externas/akasia fuentes-externas/selawik /tmp/fx/a /tmp/fx/s
           cd /tmp/fx/a
           API=https://codeberg.org/api/v1/repos/bloudraad/akasia
-          curl -fsSL "$API/releases?limit=20" -o rels.json
-          jq '[.[] | {tag_name, draft, prerelease, assets: [.assets[] | {name, size, browser_download_url}]}]' rels.json
-          curl -fsSL "$API/tags" | jq '[.[] | {name, zipball_url}]' || true
-          jq '.[0]' rels.json > rel.json
-          for u in $(jq -r '.assets[].browser_download_url' rel.json); do curl -fsSLO "$u"; done
+          curl -sS -w '\n%{http_code}\n' "$API" | tail -c 600 || true
+          curl -sS "https://codeberg.org/api/v1/repos/search?q=akasia" | jq '[.data[] | {full_name, html_url}]' || true
+          git clone --depth 1 https://codeberg.org/bloudraad/akasia src || true
+          ls -la src || true
+          find src -maxdepth 2 | head -80 || true
+          sed -n '1,200p' src/README.md || true
+          curl -fsSL "$API/releases?limit=20" -o rels.json || echo '[]' > rels.json
+          jq '[.[] | {tag_name, assets: [.assets[] | {name, size, browser_download_url}]}]' rels.json || true
+          jq '.[0] // {}' rels.json > rel.json
+          for u in $(jq -r '(.assets // [])[].browser_download_url' rel.json); do curl -fsSLO "$u"; done
           for z in *.zip; do [ -f "$z" ] && unzip -o -q "$z" -d unz; done
-          find . -type f \( -iname '*.ttf' -o -iname '*.otf' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/akasia/" \;
-          find . -type f \( -iname 'OFL*' -o -iname 'LICEN*' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/akasia/" \;
-          jq -r .tag_name rel.json > "$GITHUB_WORKSPACE/fuentes-externas/akasia/VERSION.txt"
+          find . -path ./src -prune -o -type f \( -iname '*.ttf' -o -iname '*.otf' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/akasia/" \;
+          find . -path ./src -prune -o -type f \( -iname 'OFL*' -o -iname 'LICEN*' \) -exec cp {} "$GITHUB_WORKSPACE/fuentes-externas/akasia/" \;
+          jq -r '.tag_name // "sin version"' rel.json > "$GITHUB_WORKSPACE/fuentes-externas/akasia/VERSION.txt"
           cd /tmp/fx/s
           gh release download -R microsoft/Selawik --pattern '*' || true
           ls -la
