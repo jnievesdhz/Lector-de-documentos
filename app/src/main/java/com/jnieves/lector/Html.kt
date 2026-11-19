@@ -80,15 +80,19 @@ object Html {
     private const val CSS = """
 html,body{margin:0;padding:0}
 body{background:#f4f4f4;color:#161616;font-family:sans-serif;-webkit-text-size-adjust:100%}
-body.pdf{background:#d9d9d9;padding:6px 0}
-body.img{background:#111}
+body.pdf{background:#0b0b0e;padding:6px 0}
+body.img{background:#0b0b0e}
+/* Espacio para las barras de arriba y de abajo del visor */
+.spt{height:60px}.spb{height:84px}
+body.img .spt,body.img .spb,body.msg .spt,body.msg .spb{display:none}
 .pg{width:100%;background:#fff;margin:0 0 6px 0;box-shadow:0 1px 3px rgba(0,0,0,.35)}
 .pg img{width:100%;height:100%;display:block}
 .pg img:not([src]){visibility:hidden}
 .imgwrap{min-height:100vh;display:flex;align-items:center;justify-content:center}
 .imgwrap img{max-width:100%;height:auto;display:block}
 pre{white-space:pre-wrap;word-wrap:break-word;font-family:monospace;font-size:14px;line-height:1.45;padding:14px;margin:0}
-.msg{padding:48px 24px;text-align:center;font-size:17px;line-height:1.5}
+body.msg{background:#0f0f12;color:#e4e4ea}
+.msg{padding:120px 24px 48px;text-align:center;font-size:17px;line-height:1.5}
 .msg small{opacity:.7}
 
 body.docx{background:#e4e4e4;padding:8px}
@@ -118,16 +122,16 @@ table.s td{border-right:1px solid #dadada;border-bottom:1px solid #dadada;paddin
 table.s td.n{text-align:right}
 table.s td.b{text-align:center}
 table.s td.w{white-space:pre-wrap;max-width:320px}
-table.s th{background:#f1f1f1;color:#5a5a5a;font-weight:normal;border-right:1px solid #cfcfcf;border-bottom:1px solid #cfcfcf;padding:3px 6px;position:sticky;top:0;z-index:2}
+table.s th{background:#f1f1f1;color:#5a5a5a;font-weight:normal;border-right:1px solid #cfcfcf;border-bottom:1px solid #cfcfcf;padding:3px 6px;position:sticky;top:var(--tb,0px);z-index:2;transition:top .2s}
 table.s th.rh{left:0;z-index:1;text-align:right;min-width:28px}
 table.s th.corner{left:0;z-index:3}
 .sh{display:none}.sh.on{display:block}
-.tabs{position:fixed;left:0;right:0;bottom:0;display:flex;overflow-x:auto;background:#e9e9e9;border-top:1px solid #bdbdbd;z-index:5}
+.tabs{position:fixed;left:0;right:0;bottom:var(--bb,0px);transition:bottom .2s;display:flex;overflow-x:auto;background:#e9e9e9;border-top:1px solid #bdbdbd;z-index:5}
 .tabs button{flex:0 0 auto;border:0;background:none;padding:13px 16px;font-size:15px;color:#333;white-space:nowrap}
 .tabs button.on{background:#fff;color:#107c41;font-weight:bold;box-shadow:inset 0 -3px 0 #107c41}
 .note{padding:10px 12px;color:#666;font-size:14px}
 
-body.pptx{background:#303030;padding:8px 6px}
+body.pptx{background:#0b0b0e;padding:8px 6px}
 .sl{position:relative;width:100%;overflow:hidden;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.55)}
 .si{position:absolute;left:0;top:0;transform-origin:0 0;overflow:hidden;font-family:sans-serif;color:#000;line-height:1.2}
 .shp{position:absolute;box-sizing:border-box}
@@ -141,16 +145,29 @@ body.pptx{background:#303030;padding:8px 6px}
 table.pt{border-collapse:collapse;table-layout:fixed;width:100%}
 table.pt td{overflow:hidden}
 .sl a{color:inherit}
-.sn{color:#bdbdbd;font-size:13px;text-align:center;margin:4px 0 14px}
+.sn{color:#9e9ea8;font-size:13px;text-align:center;margin:4px 0 14px}
 .snotes{background:#fff8dc;color:#333;margin:-6px 4px 18px;padding:8px 10px;border-radius:6px;font-size:14px;white-space:pre-wrap;line-height:1.4}
 
-@media (prefers-color-scheme: dark){
- body{background:#161616;color:#e6e6e6}
- body.pdf{background:#2b2b2b}
- body.img{background:#000}
- body.docx{background:#2b2b2b}
- body.sheet{background:#fff;color:#111}
-}
+/* Barras del visor visibles: la hoja de cálculo deja sitio arriba y abajo */
+body.bars{--tb:60px;--bb:84px}
+
+/*
+ Modo oscuro de Word, Excel y texto. Se invierten los colores del documento
+ (así también se aclaran los textos negros con color propio) y se vuelven a
+ invertir las imágenes y los gráficos para que queden como en el original.
+ #f0f0ed invertido da el grafito #0f0f12 de la app.
+*/
+body.dark{background:#0f0f12;color:#e4e4ea}
+body.docx.dark .doc{background:#f0f0ed;box-shadow:none;filter:invert(1) hue-rotate(180deg)}
+body.dark .doc img,body.dark .doc .chart{filter:invert(1) hue-rotate(180deg)}
+body.sheet.dark .sh{filter:invert(1) hue-rotate(180deg)}
+body.sheet.dark table.s td{background:#f0f0ed}
+body.sheet.dark table.s th{background:#e7e7e3}
+body.sheet.dark .sh img,body.sheet.dark .sh svg{filter:invert(1) hue-rotate(180deg)}
+body.sheet.dark .tabs{background:#18181c;border-top-color:#2a2a30}
+body.sheet.dark .tabs button{color:#9e9ea8}
+body.sheet.dark .tabs button.on{background:#26232f;color:#dcd3ff;box-shadow:inset 0 -3px 0 #c3b4ff}
+body.dark .note{color:#9e9ea8}
 """
 
     /** Ajusta cada diapositiva al ancho de la pantalla. */
@@ -180,6 +197,21 @@ table.pt td{overflow:hidden}
   }
   window.addEventListener('resize',fit);
   fit();
+
+  // Diapositiva actual (para el contador "3 / 42" y para saltar a una diapositiva)
+  var ss=document.querySelectorAll('.sl');
+  try{ Android.setPageCount(ss.length); }catch(e){}
+  function topOf(el){ return el.getBoundingClientRect().top+window.scrollY; }
+  var last=-1,tick=false;
+  function up(){
+    tick=false;
+    var y=window.scrollY+window.innerHeight/2,a=0;
+    for(var k=0;k<ss.length;k++){ if(topOf(ss[k])<=y) a=k; else break; }
+    if(a!==last){ last=a; try{ Android.onPage(a+1); }catch(e){} }
+  }
+  window.addEventListener('scroll',function(){ if(!tick){ tick=true; requestAnimationFrame(up); } },{passive:true});
+  up();
+  window.goPage=function(n){ var s=ss[n-1]; if(s){ window.scrollTo(0,Math.max(0,topOf(s)-68)); } };
 })();
 """
 
@@ -237,6 +269,10 @@ function showSheet(i){
     window.visualViewport.addEventListener('resize',function(){ measure(); onScroll(); });
   }
   measure();
+  window.goPage=function(n){
+    var d=document.getElementById('p'+(n-1));
+    if(d){ window.scrollTo(0,Math.max(0,d.getBoundingClientRect().top+window.scrollY-68)); }
+  };
 })();
 """
 
@@ -255,12 +291,35 @@ function showSheet(i){
 })();
 """
 
+    /**
+     * Barras del visor: se esconden al bajar leyendo y vuelven al tocar la pantalla
+     * o al llegar arriba. También cambia el modo oscuro sin recargar.
+     */
+    private const val BARS_SCRIPT = """
+(function(){
+  var lastY=window.scrollY,acc=0;
+  window.addEventListener('scroll',function(){
+    var y=window.scrollY,d=y-lastY; lastY=y;
+    if(y<8){ acc=0; try{ Android.onBars(1); }catch(e){} return; }
+    if(d>0){ acc+=d; if(acc>24){ acc=0; try{ Android.onBars(0); }catch(e){} } } else { acc=0; }
+  },{passive:true});
+  document.addEventListener('click',function(e){
+    var t=e.target;
+    if(t&&t.closest&&t.closest('a,button,input,select,textarea,label')) return;
+    try{ Android.onTap(); }catch(err){}
+  });
+})();
+window.setDark=function(on){ document.body.classList.toggle('dark',!!on); };
+window.setBars=function(on){ document.body.classList.toggle('bars',!!on); };
+"""
+
     fun page(body: String, script: String, cls: String, minScale: String = "1"): String =
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">" +
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, " +
             "minimum-scale=" + minScale + ", maximum-scale=8, user-scalable=yes\">" +
             "<style>" + FONT_CSS + CSS + "</style></head><body class=\"" + cls + "\">" +
-            body + "<script>" + SCROLL_SCRIPT + script + "</script></body></html>"
+            "<div class=\"spt\"></div>" + body + "<div class=\"spb\"></div>" +
+            "<script>" + SCROLL_SCRIPT + BARS_SCRIPT + script + "</script></body></html>"
 
     fun message(html: String): String = page("<div class=\"msg\">$html</div>", "", "msg")
 }

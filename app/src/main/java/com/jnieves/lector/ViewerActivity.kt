@@ -2,10 +2,13 @@ package com.jnieves.lector
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -19,16 +22,21 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.text.InputType
 import android.view.Gravity
-import android.view.Menu
 import android.view.PixelCopy
-import android.view.MenuItem
+import android.view.View
+import android.view.WindowManager
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.FileProvider
@@ -44,6 +52,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** Muestra un documento. Recibe archivos desde la pantalla de inicio, "Abrir con" o "Compartir". */
@@ -65,6 +74,23 @@ class ViewerActivity : Activity() {
     @Volatile private var entryId: String? = null
     @Volatile private var wantCapture = false
 
+    // Barras del visor
+    private lateinit var topBox: LinearLayout
+    private lateinit var titleView: TextView
+    private lateinit var subtitleView: TextView
+    private lateinit var moonBtn: ImageView
+    private lateinit var shareBtn: ImageView
+    private lateinit var moreBtn: ImageView
+    private lateinit var bottomBar: LinearLayout
+    private lateinit var zoomLabel: TextView
+    private lateinit var pageBtnText: TextView
+    private val pageViews = ArrayList<View>()
+    private var barsShown = true
+    private var dark = true
+    @Volatile private var displayName = ""
+    @Volatile private var pagesTotal = 0
+    private var currentPage = 1
+
     // Posición de lectura (0 = inicio, 1 = final), para volver al mismo punto al girar el teléfono
     @Volatile private var scrollFrac = 0f
     private var restoreFrac: Float? = null
@@ -83,22 +109,22 @@ class ViewerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Docs.cleanOld(this)
+        dark = getSharedPreferences("ajustes", MODE_PRIVATE).getBoolean("docs_oscuros", true)
 
         webView = WebView(this)
         configureWebView(webView)
 
         pageLabel = TextView(this).apply {
-            setTextColor(Color.WHITE)
+            setTextColor(Ui.TEXT)
             textSize = 14f
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(16).toFloat()
-                setColor(0xAA000000.toInt())
-            }
+            typeface = Ui.BOLD
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+            background = Ui.round(this@ViewerActivity, Ui.SURFACE, 12f, Ui.BORDER, 1f)
             alpha = 0f
         }
 
         val root = FrameLayout(this)
+        root.setBackgroundColor(Ui.BG)
         root.addView(
             webView,
             FrameLayout.LayoutParams(
@@ -114,8 +140,9 @@ class ViewerActivity : Activity() {
                 Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             ).apply { bottomMargin = dp(24) }
         )
+        buildTopBar(root)
+        buildBottomBar(root)
         setContentView(root)
-        actionBar?.setDisplayHomeAsUpEnabled(true)
 
         // Al girar el teléfono la pantalla se vuelve a crear: se reutiliza lo ya convertido
         if (savedInstanceState != null && restore(savedInstanceState)) return
@@ -141,7 +168,9 @@ class ViewerActivity : Activity() {
         outState.putString("name", docName)
         outState.putString("mime", docMime)
         outState.putString("kind", kind.name)
-        outState.putString("title", title?.toString())
+        outState.putString("title", displayName)
+        outState.putInt("pages", pagesTotal)
+        outState.putBoolean("bars", barsShown)
         outState.putInt("rw", renderWidth)
         outState.putFloat("frac", scrollFrac)
         outState.putString("entry", entryId)
@@ -161,8 +190,13 @@ class ViewerActivity : Activity() {
         renderWidth = b.getInt("rw", renderWidth)
         restoreFrac = b.getFloat("frac", 0f)
         entryId = b.getString("entry")
-        title = b.getString("title") ?: docName
-        invalidateOptionsMenu()
+        displayName = b.getString("title") ?: docName
+        pagesTotal = b.getInt("pages", 0)
+        barsShown = b.getBoolean("bars", true)
+        if (!barsShown) {
+            topBox.post { applyBars(false, false) }
+        }
+        updateTopBar()
         if (kind == Kind.PDF) {
             Thread {
                 val ok = try {
@@ -216,6 +250,8 @@ class ViewerActivity : Activity() {
             docFile = file
             docName = file.name
             docMime = mime
+            displayName = name
+            docKind = Docs.kindFor(mime, file.name)
             // Anota el archivo en Recientes (si llegó desde otra app, guarda una copia para reabrirlo)
             entryId = try {
                 Library.record(this, uri, name, mime, file, intent.getStringExtra(EXTRA_ENTRY))
@@ -224,8 +260,8 @@ class ViewerActivity : Activity() {
             }
             runOnUiThread {
                 if (!isDestroyed) {
-                    title = name
-                    invalidateOptionsMenu()
+                    displayName = name
+                    updateTopBar()
                 }
             }
 
@@ -241,15 +277,15 @@ class ViewerActivity : Activity() {
             wantCapture = entryId != null && kind in CAPTURE_KINDS
             when (kind) {
                 Kind.PDF -> openPdf(file, dir)
-                Kind.DOCX -> writeAndLoad(dir, Html.page(DocxToHtml.convert(file, dir), "", "docx"))
+                Kind.DOCX -> writeAndLoad(dir, page(DocxToHtml.convert(file, dir), "", "docx"))
                 Kind.XLSX -> writeAndLoad(
-                    dir, Html.page(XlsxToHtml.convert(file), Html.SHEET_SCRIPT, "sheet", "0.25")
+                    dir, page(XlsxToHtml.convert(file), Html.SHEET_SCRIPT, "sheet", "0.25")
                 )
                 Kind.CSV -> writeAndLoad(
-                    dir, Html.page(CsvToHtml.convert(readText(file).first), Html.SHEET_SCRIPT, "sheet", "0.25")
+                    dir, page(CsvToHtml.convert(readText(file).first), Html.SHEET_SCRIPT, "sheet", "0.25")
                 )
                 Kind.PPTX -> writeAndLoad(
-                    dir, Html.page(PptxToHtml.convert(file, dir), Html.SLIDES_SCRIPT, "pptx")
+                    dir, page(PptxToHtml.convert(file, dir), Html.SLIDES_SCRIPT, "pptx")
                 )
                 Kind.OLD_OFFICE -> showMessageAsync(
                     "Este es un formato antiguo de Office (.doc, .xls o .ppt) que la app no puede leer.<br><br>" +
@@ -296,6 +332,7 @@ class ViewerActivity : Activity() {
                 renderer.openPage(i).use { p -> sizes.add(intArrayOf(p.width, p.height)) }
             }
             pageCount = renderer.pageCount
+            pagesTotal = renderer.pageCount
         }
         return sizes
     }
@@ -331,7 +368,7 @@ class ViewerActivity : Activity() {
                 .append('/').append(s[1].coerceAtLeast(1))
                 .append("\"><img alt=\"\"></div>")
         }
-        writeAndLoad(dir, Html.page(sb.toString(), Html.PDF_SCRIPT, "pdf"))
+        writeAndLoad(dir, page(sb.toString(), Html.PDF_SCRIPT, "pdf"))
     }
 
     /** Puente que el JavaScript de la página usa para pedir páginas. */
@@ -356,6 +393,27 @@ class ViewerActivity : Activity() {
         @JavascriptInterface
         fun onPage(n: Int) {
             runOnUiThread { if (!isDestroyed) showPageNumber(n) }
+        }
+
+        @JavascriptInterface
+        fun setPageCount(n: Int) {
+            runOnUiThread {
+                if (!isDestroyed) {
+                    pagesTotal = n
+                    updateTopBar()
+                }
+            }
+        }
+
+        /** 1 = mostrar barras (se llegó arriba), 0 = esconderlas (se está bajando). */
+        @JavascriptInterface
+        fun onBars(v: Int) {
+            runOnUiThread { if (!isDestroyed) applyBars(v == 1, true) }
+        }
+
+        @JavascriptInterface
+        fun onTap() {
+            runOnUiThread { if (!isDestroyed) applyBars(!barsShown, true) }
         }
     }
 
@@ -472,8 +530,12 @@ class ViewerActivity : Activity() {
     }
 
     private fun showPageNumber(n: Int) {
-        if (pageCount <= 1) return
-        pageLabel.text = "$n / $pageCount"
+        currentPage = n
+        if (pagesTotal <= 1) return
+        pageBtnText.text = "$n / $pagesTotal"
+        // Con las barras visibles el número ya está en la barra de abajo
+        if (barsShown) return
+        pageLabel.text = "$n / $pagesTotal"
         pageLabel.animate().cancel()
         pageLabel.alpha = 1f
         handler.removeCallbacks(hideLabel)
@@ -496,7 +558,7 @@ class ViewerActivity : Activity() {
         }
         entryId?.let { makeImageThumb(it, shown) }
         val body = "<div class=\"imgwrap\"><img src=\"" + Uri.encode(shown.name) + "\" alt=\"\"></div>"
-        writeAndLoad(dir, Html.page(body, "", "img"))
+        writeAndLoad(dir, page(body, "", "img"))
     }
 
     /** Archivos de Office cifrados con contraseña (y los .doc/.xls viejos) empiezan con estos bytes. */
@@ -512,7 +574,7 @@ class ViewerActivity : Activity() {
         val note = if (truncated) {
             "<div class=\"msg\">El archivo es muy grande. Se muestran los primeros 8 MB.</div>"
         } else ""
-        writeAndLoad(dir, Html.page("<pre>" + Docs.esc(text) + "</pre>" + note, "", "txt"))
+        writeAndLoad(dir, page("<pre>" + Docs.esc(text) + "</pre>" + note, "", "txt"))
     }
 
     /** Lee hasta 8 MB de texto, en UTF-8 o, si no cuadra, en la codificación de Windows. */
@@ -555,7 +617,21 @@ class ViewerActivity : Activity() {
         }
         w.addJavascriptInterface(Bridge(), "Android")
         w.webViewClient = object : WebViewClient() {
+            override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
+                val pct = (newScale / resources.displayMetrics.density * 100f).roundToInt()
+                zoomLabel.text = "$pct %"
+            }
+
             override fun onPageFinished(view: WebView, url: String?) {
+                if (url != null && url.startsWith("file:")) {
+                    // Al volver a cargar (por ejemplo al girar) se aplica el estado actual
+                    view.evaluateJavascript(
+                        "window.setDark&&setDark(" + (if (dark) 1 else 0) + ");" +
+                            "window.setBars&&setBars(" + (if (barsShown) 1 else 0) + ");", null
+                    )
+                    bottomBar.visibility = View.VISIBLE
+                    applyWebBg()
+                }
                 if (wantCapture && url != null && url.startsWith("file:")) {
                     wantCapture = false
                     view.postDelayed({ captureThumb() }, 1500)
@@ -589,58 +665,236 @@ class ViewerActivity : Activity() {
                 return true
             }
         }
-        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
-        w.setBackgroundColor(if (night) Color.rgb(22, 22, 22) else Color.rgb(244, 244, 244))
+        w.setBackgroundColor(Ui.BG)
     }
 
     private fun writeAndLoad(dir: File, html: String) {
         val f = File(dir, "vista.html")
         f.writeText(html)
-        runOnUiThread { if (!isDestroyed) webView.loadUrl(Uri.fromFile(f).toString()) }
+        runOnUiThread {
+            if (!isDestroyed) {
+                applyWebBg()
+                updateTopBar()
+                webView.loadUrl(Uri.fromFile(f).toString())
+            }
+        }
+    }
+
+    /** Página HTML del documento con las clases del visor (barras y modo oscuro). */
+    private fun page(body: String, script: String, cls: String, minScale: String = "1"): String {
+        var c = "$cls bars"
+        if (dark && cls in DARK_CLASSES) c += " dark"
+        return Html.page(body, script, c, minScale)
     }
 
     private fun showMessage(html: String) {
+        bottomBar.visibility = View.GONE
+        applyBars(true, false)
+        webView.setBackgroundColor(Ui.BG)
         webView.loadDataWithBaseURL(null, Html.message(html), "text/html", "utf-8", null)
+    }
+
+    // ------------------------------------------------------------ barras
+
+    private fun buildTopBar(root: FrameLayout) {
+        topBox = Ui.column(this).apply { setBackgroundColor(Ui.SURFACE) }
+        val bar = Ui.row(this).apply { setPadding(dp(4), dp(6), dp(4), dp(6)) }
+        bar.addView(Ui.iconButton(this, R.drawable.ic_back, "Volver", Ui.TEXT_SOFT) { finish() })
+        val texts = Ui.column(this)
+        titleView = Ui.singleLine(Ui.text(this, "Abriendo…", 15f, Ui.TEXT, bold = true))
+        subtitleView = Ui.singleLine(Ui.text(this, "", 12f, Ui.MUTED))
+        texts.addView(titleView, Ui.lp(Ui.MATCH, Ui.WRAP))
+        texts.addView(subtitleView, Ui.lp(Ui.MATCH, Ui.WRAP).apply { topMargin = dp(1) })
+        bar.addView(texts, Ui.lp(0, Ui.WRAP, 1f).apply { marginStart = dp(4) })
+        moonBtn = Ui.iconButton(this, R.drawable.ic_moon, "Modo oscuro del documento") { toggleDark() }
+        shareBtn = Ui.iconButton(this, R.drawable.ic_share_line, "Compartir") { share() }
+        moreBtn = Ui.iconButton(this, R.drawable.ic_more, "Más opciones") { showMore(it) }
+        moonBtn.visibility = View.GONE
+        shareBtn.visibility = View.GONE
+        moreBtn.visibility = View.GONE
+        bar.addView(moonBtn)
+        bar.addView(shareBtn)
+        bar.addView(moreBtn)
+        topBox.addView(bar, Ui.lp(Ui.MATCH, Ui.WRAP))
+        topBox.addView(View(this).apply { setBackgroundColor(Ui.BORDER) }, Ui.lp(Ui.MATCH, dp(1)))
+        root.addView(topBox, FrameLayout.LayoutParams(Ui.MATCH, Ui.WRAP, Gravity.TOP))
+    }
+
+    private fun buildBottomBar(root: FrameLayout) {
+        bottomBar = Ui.row(this).apply {
+            background = Ui.round(this@ViewerActivity, Ui.SURFACE, 16f, Ui.BORDER, 1f)
+            elevation = dp(8).toFloat()
+            setPadding(dp(4), 0, dp(6), 0)
+            visibility = View.GONE
+            isClickable = true
+        }
+        fun spacer() = View(this).also { bottomBar.addView(it, Ui.lp(0, 1, 1f)) }
+        fun divider() = View(this).apply { setBackgroundColor(0xFF2E2E35.toInt()) }
+            .also { bottomBar.addView(it, Ui.lp(dp(1), dp(24))) }
+
+        bottomBar.addView(Ui.iconButton(this, R.drawable.ic_minus, "Alejar") { webView.zoomBy(0.8f) })
+        zoomLabel = Ui.text(this, "100 %", 13f, Ui.TEXT, bold = true).apply { gravity = Gravity.CENTER }
+        bottomBar.addView(zoomLabel, Ui.lp(dp(52), Ui.WRAP))
+        bottomBar.addView(Ui.iconButton(this, R.drawable.ic_plus, "Acercar") { webView.zoomBy(1.25f) })
+        spacer()
+        divider()
+        spacer()
+        bottomBar.addView(Ui.iconButton(this, R.drawable.ic_rotate, "Girar la pantalla") { rotate() })
+
+        pageViews.add(spacer())
+        pageViews.add(divider())
+        pageViews.add(spacer())
+        val pageBtn = Ui.row(this).apply {
+            background = Ui.ripple(this@ViewerActivity, Ui.round(this@ViewerActivity, Ui.ACTIVE_BG, 10f), 10f)
+            setPadding(dp(12), 0, dp(12), 0)
+            isClickable = true
+            isFocusable = true
+            contentDescription = "Ir a una página"
+            setOnClickListener { goToPageDialog() }
+        }
+        pageBtn.addView(Ui.icon(this, R.drawable.ic_grid, Ui.ACTIVE_TEXT, 16))
+        pageBtnText = Ui.text(this, "1 / 1", 13f, Ui.ACTIVE_TEXT, bold = true)
+        pageBtn.addView(pageBtnText, Ui.lp(Ui.WRAP, Ui.WRAP).apply { marginStart = dp(8) })
+        bottomBar.addView(pageBtn, Ui.lp(Ui.WRAP, dp(40)))
+        pageViews.add(pageBtn)
+        pageViews.forEach { it.visibility = View.GONE }
+
+        root.addView(bottomBar, FrameLayout.LayoutParams(Ui.MATCH, dp(56), Gravity.BOTTOM).apply {
+            setMargins(dp(12), 0, dp(12), dp(16))
+        })
+    }
+
+    /** Muestra u oculta las barras de arriba y de abajo. */
+    private fun applyBars(show: Boolean, animate: Boolean) {
+        if (show == barsShown && animate) return
+        barsShown = show
+        val up = if (show) 0f else -(topBox.height + dp(4)).toFloat()
+        val down = if (show) 0f else (bottomBar.height + dp(24)).toFloat()
+        if (animate) {
+            topBox.animate().translationY(up).setDuration(180).start()
+            bottomBar.animate().translationY(down).setDuration(180).start()
+        } else {
+            topBox.translationY = up
+            bottomBar.translationY = down
+        }
+        if (show) pageLabel.alpha = 0f
+        webView.evaluateJavascript("window.setBars&&setBars(" + (if (show) 1 else 0) + ")", null)
+    }
+
+    private fun updateTopBar() {
+        titleView.text = displayName.ifBlank { "Abriendo…" }
+        val k = docKind
+        val parts = ArrayList<String>()
+        if (k != null) parts.add(Ui.kindLabel(k))
+        if (pagesTotal > 0 && (k == Kind.PDF || k == Kind.PPTX)) {
+            parts.add(
+                if (k == Kind.PPTX) (if (pagesTotal == 1) "1 diapositiva" else "$pagesTotal diapositivas")
+                else (if (pagesTotal == 1) "1 página" else "$pagesTotal páginas")
+            )
+        }
+        docFile?.let { parts.add(Ui.size(it.length())) }
+        subtitleView.text = parts.joinToString(" · ")
+        val ready = docFile != null
+        shareBtn.visibility = if (ready) View.VISIBLE else View.GONE
+        moreBtn.visibility = if (ready) View.VISIBLE else View.GONE
+        moonBtn.visibility = if (ready && k in DARK_KINDS) View.VISIBLE else View.GONE
+        styleMoon()
+        val showPages = pagesTotal > 1
+        pageViews.forEach { it.visibility = if (showPages) View.VISIBLE else View.GONE }
+        if (showPages) pageBtnText.text = "$currentPage / $pagesTotal"
+    }
+
+    private fun styleMoon() {
+        moonBtn.background = if (dark) Ui.round(this, Ui.ACTIVE_BG, 12f) else Ui.borderlessRipple()
+        moonBtn.imageTintList = ColorStateList.valueOf(if (dark) Ui.ACTIVE_TEXT else Ui.ICON)
+        moonBtn.contentDescription = if (dark) "Modo oscuro activado" else "Modo oscuro desactivado"
+    }
+
+    /** Color de fondo del WebView mientras carga, para que no haya destellos. */
+    private fun applyWebBg() {
+        val k = docKind
+        val c = when {
+            k == null -> Ui.BG
+            k in DARK_KINDS && !dark -> when (k) {
+                Kind.DOCX -> 0xFFE4E4E4.toInt()
+                Kind.TEXT -> 0xFFF4F4F4.toInt()
+                else -> Color.WHITE
+            }
+            k in DARK_KINDS -> Ui.BG
+            else -> 0xFF0B0B0E.toInt()
+        }
+        webView.setBackgroundColor(c)
+    }
+
+    private fun toggleDark() {
+        dark = !dark
+        getSharedPreferences("ajustes", MODE_PRIVATE).edit().putBoolean("docs_oscuros", dark).apply()
+        webView.evaluateJavascript("window.setDark&&setDark(" + (if (dark) 1 else 0) + ")", null)
+        applyWebBg()
+        styleMoon()
+    }
+
+    private fun rotate() {
+        val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        requestedOrientation = if (land) ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+        else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+    }
+
+    private fun goToPageDialog() {
+        if (pagesTotal < 2) return
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            hint = "1 a $pagesTotal"
+            setText(currentPage.toString())
+            selectAll()
+        }
+        val box = FrameLayout(this).apply {
+            setPadding(dp(24), dp(8), dp(24), 0)
+            addView(input)
+        }
+        val label = if (docKind == Kind.PPTX) "Ir a la diapositiva" else "Ir a la página"
+        val dlg = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle(label)
+            .setView(box)
+            .setPositiveButton("Ir") { _, _ ->
+                val n = input.text.toString().trim().toIntOrNull()
+                if (n != null) {
+                    val p = n.coerceIn(1, pagesTotal)
+                    webView.evaluateJavascript("window.goPage&&goPage($p)", null)
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .create()
+        dlg.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dlg.show()
+    }
+
+    private fun showMore(anchor: View) {
+        val pm = PopupMenu(this, anchor)
+        val id = entryId
+        val fav = if (id != null) Library.find(this, id)?.fav == true else false
+        if (id != null) pm.menu.add(0, 1, 0, if (fav) "Quitar de favoritos" else "Agregar a favoritos")
+        pm.menu.add(0, 2, 1, "Abrir con otra app")
+        pm.setOnMenuItemClickListener {
+            when (it.itemId) {
+                1 -> if (id != null) {
+                    Library.setFavorite(this, id, !fav)
+                    Toast.makeText(
+                        this, if (fav) "Quitado de favoritos" else "Agregado a favoritos", Toast.LENGTH_SHORT
+                    ).show()
+                }
+                2 -> openWith()
+            }
+            true
+        }
+        pm.show()
     }
 
     private fun showMessageAsync(html: String) {
         runOnUiThread { if (!isDestroyed) showMessage(html) }
     }
 
-    // --------------------------------------------------------------- menú
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menu.add(0, MENU_SHARE, 0, "Compartir")
-            .setIcon(R.drawable.ic_share)
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-        menu.add(0, MENU_OPEN_WITH, 1, "Abrir con otra app")
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-        return true
-    }
-
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        val ready = docFile != null
-        menu.findItem(MENU_SHARE)?.isVisible = ready
-        menu.findItem(MENU_OPEN_WITH)?.isVisible = ready
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        android.R.id.home -> {
-            finish()
-            true
-        }
-        MENU_SHARE -> {
-            share()
-            true
-        }
-        MENU_OPEN_WITH -> {
-            openWith()
-            true
-        }
-        else -> super.onOptionsItemSelected(item)
-    }
+    // ------------------------------------------------------- compartir
 
     private fun contentUri(): Uri? {
         val f = docFile ?: return null
@@ -715,7 +969,8 @@ class ViewerActivity : Activity() {
         /** Id de la entrada de Recientes cuando el archivo se abre desde la pantalla de inicio. */
         const val EXTRA_ENTRY = "com.jnieves.lector.ENTRY"
         private val CAPTURE_KINDS = setOf(Kind.DOCX, Kind.XLSX, Kind.PPTX, Kind.CSV, Kind.TEXT)
-        private const val MENU_SHARE = 1
-        private const val MENU_OPEN_WITH = 2
+        /** Tipos que cambian con el modo oscuro. Los PDF, PowerPoint e imágenes siempre se ven como el original. */
+        private val DARK_KINDS = setOf(Kind.DOCX, Kind.XLSX, Kind.CSV, Kind.TEXT)
+        private val DARK_CLASSES = setOf("docx", "sheet", "txt")
     }
 }
