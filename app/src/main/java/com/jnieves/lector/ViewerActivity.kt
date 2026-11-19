@@ -24,6 +24,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
@@ -43,6 +44,7 @@ import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridView
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
@@ -130,7 +132,17 @@ class ViewerActivity : Activity() {
 
     /** Lugar del documento antes de un salto, para el historial del panel. */
     private class Jump(val page: Int, val frac: Float, val time: Long)
-    private val history = ArrayList<Jump>()
+    private val histories = HashMap<String, ArrayList<Jump>>()
+    private val history: ArrayList<Jump> get() = histories.getOrPut(curTabId ?: "") { ArrayList() }
+
+    // Pestañas
+    /** Sube cada vez que cambia el documento mostrado; los hilos viejos lo comparan y se detienen. */
+    @Volatile private var gen = 0
+    @Volatile private var curTabId: String? = null
+    private var curScale = 1f
+    private var restoreScale: Float? = null
+    private lateinit var tabScroll: HorizontalScrollView
+    private lateinit var tabStrip: LinearLayout
 
     // Posición de lectura (0 = inicio, 1 = final), para volver al mismo punto al girar el teléfono
     @Volatile private var scrollFrac = 0f
@@ -186,77 +198,293 @@ class ViewerActivity : Activity() {
         buildBottomBar(root)
         setContentView(root)
 
-        // Al girar el teléfono la pantalla se vuelve a crear: se reutiliza lo ya convertido
-        if (savedInstanceState != null && restore(savedInstanceState)) return
+        // Al girar el teléfono la pantalla se vuelve a crear: se reabre la pestaña activa
+        val uri = if (savedInstanceState == null) incomingUri(intent) else null
+        if (uri != null) openNew(uri, intent.getStringExtra(EXTRA_ENTRY)) else resumeActive()
+    }
 
+    /** Llega otro archivo con el visor ya abierto: se agrega como pestaña. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
         val uri = incomingUri(intent)
-        if (uri == null) {
-            showMessage("No se recibió ningún archivo.")
-            return
-        }
-        showMessage("Abriendo…")
-        Thread { load(uri) }.start()
+        if (uri != null) openNew(uri, intent.getStringExtra(EXTRA_ENTRY)) else if (curTabId == null) resumeActive()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        saveCurrent()
     }
 
     // ------------------------------------------------------- girar pantalla
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        val dir = docDir ?: return
-        val file = docFile ?: return
-        val kind = docKind ?: return
-        outState.putString("dir", dir.path)
-        outState.putString("file", file.path)
-        outState.putString("name", docName)
-        outState.putString("mime", docMime)
-        outState.putString("kind", kind.name)
-        outState.putString("title", displayName)
-        outState.putInt("pages", pagesTotal)
-        outState.putBoolean("bars", barsShown)
-        outState.putInt("rw", renderWidth)
-        outState.putFloat("frac", scrollFrac)
-        outState.putString("entry", entryId)
+        saveCurrent()
     }
 
-    private fun restore(b: Bundle): Boolean {
-        val dir = b.getString("dir")?.let { File(it) } ?: return false
-        val file = b.getString("file")?.let { File(it) } ?: return false
+    // ------------------------------------------------------------ pestañas
+
+    /** Muestra la pestaña activa (al volver desde el inicio o al girar la pantalla). */
+    private fun resumeActive() {
+        val t = Tabs.active(this)
+        if (t == null) {
+            goHome()
+            return
+        }
+        activate(t)
+    }
+
+    /** Abre un archivo nuevo en una pestaña (o va a la suya si ya estaba abierto). */
+    private fun openNew(uri: Uri, entryExtra: String?) {
+        val same = Tabs.findSame(this, uri.toString(), entryExtra)
+        if (same != null) {
+            activate(same)
+            return
+        }
+        saveCurrent()
+        resetDoc()
+        val g = ++gen
+        curTabId = null
+        updateTabStrip()
+        showMessage("Abriendo…")
+        Thread { load(uri, entryExtra, null, g) }.start()
+    }
+
+    /** Guarda dónde ibas en la pestaña actual. */
+    private fun saveCurrent() {
+        val id = curTabId ?: return
+        if (docFile == null) return
+        Tabs.saveState(this, id, scrollFrac, currentPage, curScale)
+    }
+
+    /** Muestra una pestaña ya convertida. Si la copia se borró o el original cambió, la vuelve a convertir. */
+    private fun activate(t: TabInfo) {
+        if (t.id != curTabId) saveCurrent()
+        resetDoc()
+        val g = ++gen
+        curTabId = t.id
+        Tabs.setActive(this, t.id)
+        val dir = File(t.dir)
+        val file = File(t.file)
         val html = File(dir, "vista.html")
-        if (!html.exists() || !file.exists()) return false
-        val kind = b.getString("kind")?.let { k -> Kind.values().firstOrNull { it.name == k } } ?: return false
         docDir = dir
         docFile = file
-        docName = b.getString("name") ?: file.name
-        docMime = b.getString("mime") ?: docMime
-        docKind = kind
-        renderWidth = b.getInt("rw", renderWidth)
-        restoreFrac = b.getFloat("frac", 0f)
-        entryId = b.getString("entry")
-        displayName = b.getString("title") ?: docName
-        pagesTotal = b.getInt("pages", 0)
-        barsShown = b.getBoolean("bars", true)
-        if (!barsShown) {
-            topBox.post { applyBars(false, false) }
-        }
+        docName = file.name
+        docMime = t.mime
+        docKind = Docs.kindFor(t.mime, file.name)
+        entryId = t.entry
+        displayName = t.name
+        restoreFrac = t.frac
+        restoreScale = t.scale
+        currentPage = max(1, t.page)
         updateTopBar()
-        if (kind == Kind.PDF) {
-            Thread {
-                val ok = try {
-                    openRenderer(file) != null
-                } catch (e: Throwable) {
-                    false
+        updateTabStrip()
+        showMessage("Abriendo…")
+        Thread {
+            val ok = html.exists() && file.exists()
+            val changed = ok && sourceChanged(t)
+            if (!ok || changed) {
+                if (g != gen) return@Thread
+                if (changed) showMessageAsync("El archivo cambió desde la última vez. Actualizando…")
+                try {
+                    dir.deleteRecursively()
+                } catch (_: Exception) {
                 }
-                runOnUiThread {
-                    if (!isDestroyed) {
-                        if (ok) webView.loadUrl(Uri.fromFile(html).toString())
-                        else showMessage("No se pudo abrir el archivo.")
-                    }
+                load(Uri.parse(t.src), t.entry, t, g)
+                return@Thread
+            }
+            if (docKind == Kind.PDF) {
+                val sizes = try {
+                    openRenderer(file)
+                } catch (_: Throwable) {
+                    null
                 }
-            }.start()
-        } else {
-            webView.loadUrl(Uri.fromFile(html).toString())
+                if (sizes == null) {
+                    if (g == gen) showMessageAsync("No se pudo abrir el archivo.")
+                    return@Thread
+                }
+                if (g != gen) return@Thread
+            }
+            t.entry?.let { id ->
+                try {
+                    Library.record(this, Uri.parse(t.src), t.name, t.mime, file, id)
+                } catch (_: Throwable) {
+                }
+            }
+            runOnUiThread {
+                if (!isDestroyed && g == gen) {
+                    applyWebBg()
+                    updateTopBar()
+                    webView.loadUrl(Uri.fromFile(html).toString())
+                }
+            }
+        }.start()
+    }
+
+    /** ¿El archivo original cambió de tamaño desde que se abrió? */
+    private fun sourceChanged(t: TabInfo): Boolean {
+        if (t.srcSize < 0 || t.src.isEmpty()) return false
+        return try {
+            contentResolver.query(Uri.parse(t.src), arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) c.getLong(0).let { it >= 0 && it != t.srcSize } else false
+            } ?: false
+        } catch (_: Exception) {
+            false
         }
-        return true
+    }
+
+    /** Deja el visor listo para mostrar otro documento. */
+    private fun resetDoc() {
+        if (searching) closeSearch()
+        if (panel != null) closePanel()
+        handler.removeCallbacks(hideLabel)
+        pageLabel.alpha = 0f
+        synchronized(pending) {
+            pending.clear()
+            requested.clear()
+        }
+        synchronized(pdfLock) {
+            try {
+                pdf?.close()
+            } catch (_: Exception) {
+            }
+            try {
+                pdfFd?.close()
+            } catch (_: Exception) {
+            }
+            pdf = null
+            pdfFd = null
+        }
+        pdfThumbs.evictAll()
+        pageSizes = emptyList()
+        pdfHasText = null
+        pagesTotal = 0
+        pageCount = 0
+        currentPage = 1
+        scrollFrac = 0f
+        restoreFrac = null
+        restoreScale = null
+        wantCapture = false
+        curScale = 1f
+        zoomLabel.text = "100 %"
+        bottomBar.visibility = View.GONE
+        docFile = null
+        docKind = null
+        entryId = null
+    }
+
+    private fun switchTo(id: String) {
+        if (id == curTabId) return
+        val t = Tabs.find(this, id) ?: return
+        activate(t)
+    }
+
+    private fun closeTab(id: String) {
+        val active = id == curTabId
+        if (active) {
+            resetDoc()
+            gen++
+            curTabId = null
+        } else {
+            saveCurrent()
+        }
+        Tabs.remove(this, id)
+        histories.remove(id)
+        if (!active) {
+            updateTabStrip()
+            return
+        }
+        val next = Tabs.active(this)
+        if (next != null) activate(next) else goHome()
+    }
+
+    /** Vuelve al inicio sin cerrar las pestañas (quedan guardadas). */
+    private fun goHome() {
+        saveCurrent()
+        if (isTaskRoot) startActivity(Intent(this, MainActivity::class.java))
+        finish()
+    }
+
+    private fun tabMenu(anchor: View, t: TabInfo) {
+        val pm = PopupMenu(this, anchor)
+        pm.menu.add(0, 1, 0, "Cerrar pestaña")
+        if (Tabs.count(this) > 1) pm.menu.add(0, 2, 1, "Cerrar las demás")
+        pm.setOnMenuItemClickListener {
+            when (it.itemId) {
+                1 -> closeTab(t.id)
+                2 -> {
+                    if (t.id != curTabId) switchTo(t.id)
+                    Tabs.all(this).filter { o -> o.id != t.id }.forEach { o ->
+                        Tabs.remove(this, o.id)
+                        histories.remove(o.id)
+                    }
+                    updateTabStrip()
+                }
+            }
+            true
+        }
+        pm.show()
+    }
+
+    /** Fila de pestañas arriba del visor (solo con dos o más documentos abiertos). */
+    private fun updateTabStrip() {
+        val tabs = Tabs.all(this)
+        tabStrip.removeAllViews()
+        if (tabs.size < 2) {
+            tabScroll.visibility = View.GONE
+            topBox.post { pushTopOffset() }
+            return
+        }
+        tabScroll.visibility = View.VISIBLE
+        var activeView: View? = null
+        for (t in tabs) {
+            val on = t.id == curTabId
+            val v = Ui.row(this).apply {
+                setPadding(dp(12), 0, if (on) dp(2) else dp(12), 0)
+                background = if (on) Ui.round(this@ViewerActivity, Ui.ACTIVE_BG, 10f, Ui.ACTIVE_BORDER, 1f)
+                else Ui.ripple(this@ViewerActivity, Ui.round(this@ViewerActivity, Color.TRANSPARENT, 10f, Ui.BORDER, 1f), 10f)
+                isClickable = true
+                isFocusable = true
+                contentDescription = t.name
+                setOnClickListener { switchTo(t.id) }
+                setOnLongClickListener {
+                    tabMenu(it, t)
+                    true
+                }
+            }
+            v.addView(View(this).apply {
+                background = Ui.round(this@ViewerActivity, Ui.kindColor(t.kind), 4f)
+            }, Ui.lp(dp(8), dp(8)))
+            v.addView(Ui.singleLine(Ui.text(this, t.name, 13f, if (on) Ui.TEXT else Ui.MUTED, bold = on)).apply {
+                maxWidth = dp(150)
+            }, Ui.lp(Ui.WRAP, Ui.WRAP).apply { marginStart = dp(8) })
+            if (on) {
+                v.addView(Ui.iconButton(this, R.drawable.ic_close, "Cerrar pestaña", Ui.MUTED) { closeTab(t.id) }.apply {
+                    val pp = dp(9)
+                    setPadding(pp, pp, pp, pp)
+                }, Ui.lp(dp(34), dp(34)))
+                activeView = v
+            }
+            tabStrip.addView(v, Ui.lp(Ui.WRAP, dp(36)).apply { marginEnd = dp(8) })
+        }
+        tabStrip.addView(Ui.iconButton(this, R.drawable.ic_plus, "Abrir otro documento", Ui.MUTED) { goHome() }.apply {
+            val pp = dp(9)
+            setPadding(pp, pp, pp, pp)
+        }, Ui.lp(dp(36), dp(36)))
+        val av = activeView
+        tabScroll.post {
+            if (av != null) tabScroll.smoothScrollTo(max(0, av.left - dp(24)), 0)
+            pushTopOffset()
+        }
+    }
+
+    /** Le dice a la página cuánto mide la barra de arriba, para no tapar el comienzo del documento. */
+    private fun pushTopOffset() {
+        val h = topBox.height
+        if (h <= 0) return
+        val css = (h / resources.displayMetrics.density).roundToInt()
+        webView.evaluateJavascript("window.setTop&&setTop($css)", null)
     }
 
     // ---------------------------------------------------------------- carga
@@ -276,10 +504,14 @@ class ViewerActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) i.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
         else i.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
 
-    private fun load(uri: Uri) {
+    /**
+     * Copia el archivo, lo anota en Recientes, crea (o renueva) su pestaña y lo convierte.
+     * [g] es la generación del documento: si el usuario cambia de pestaña mientras tanto, se detiene.
+     */
+    private fun load(uri: Uri, entryExtra: String?, existing: TabInfo?, g: Int) {
         try {
-            val name = Docs.displayName(this, uri)
-            var mime = contentResolver.getType(uri) ?: Docs.mimeFromName(name)
+            val name = existing?.name ?: Docs.displayName(this, uri)
+            var mime = existing?.mime ?: (contentResolver.getType(uri) ?: Docs.mimeFromName(name))
             if (mime == "application/octet-stream") mime = Docs.mimeFromName(name)
 
             val dir = Docs.newDocDir(this)
@@ -287,6 +519,20 @@ class ViewerActivity : Activity() {
             contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(file).use { out -> input.copyTo(out) }
             } ?: throw IOException("No se pudo leer el archivo")
+
+            if (g != gen) {
+                dir.deleteRecursively()
+                return
+            }
+            // ¿Es un documento que ya está en otra pestaña? (por ejemplo, el mismo PDF compartido otra vez)
+            if (existing == null) {
+                val same = Tabs.findSame(this, null, null, name, file.length())
+                if (same != null) {
+                    dir.deleteRecursively()
+                    runOnUiThread { if (!isDestroyed && g == gen) activate(same) }
+                    return
+                }
+            }
 
             docDir = dir
             docFile = file
@@ -296,14 +542,38 @@ class ViewerActivity : Activity() {
             docKind = Docs.kindFor(mime, file.name)
             // Anota el archivo en Recientes (si llegó desde otra app, guarda una copia para reabrirlo)
             entryId = try {
-                Library.record(this, uri, name, mime, file, intent.getStringExtra(EXTRA_ENTRY))
+                Library.record(this, uri, name, mime, file, entryExtra)
             } catch (_: Throwable) {
                 null
             }
+            // Dirección para reabrir el original más adelante: la copia de Recientes o el enlace duradero
+            val src = entryId?.let { id -> Library.find(this, id)?.let { e -> Library.uriFor(this, e).toString() } }
+                ?: uri.toString()
+            val tab = TabInfo(
+                existing?.id ?: Tabs.newId(), name, mime, src, existing?.orig ?: uri.toString(), entryId,
+                dir.path, file.path, file.length(),
+                existing?.frac ?: 0f, existing?.page ?: 1, existing?.scale ?: 1f, System.currentTimeMillis()
+            )
+            if (g != gen) {
+                dir.deleteRecursively()
+                return
+            }
+            Tabs.put(this, tab)
+            curTabId = tab.id
+            val closedTabs = Tabs.enforceLimit(this, tab.id)
+            Tabs.trimCache(this, tab.id)
             runOnUiThread {
-                if (!isDestroyed) {
+                if (!isDestroyed && g == gen) {
                     displayName = name
                     updateTopBar()
+                    updateTabStrip()
+                    if (closedTabs.isNotEmpty()) {
+                        Toast.makeText(
+                            this,
+                            "Se cerró «${closedTabs.joinToString("», «")}» porque el máximo es de ${Tabs.MAX} pestañas",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                 }
             }
 
@@ -693,8 +963,8 @@ class ViewerActivity : Activity() {
         w.addJavascriptInterface(Bridge(), "Android")
         w.webViewClient = object : WebViewClient() {
             override fun onScaleChanged(view: WebView, oldScale: Float, newScale: Float) {
-                val pct = (newScale / resources.displayMetrics.density * 100f).roundToInt()
-                zoomLabel.text = "$pct %"
+                curScale = newScale / resources.displayMetrics.density
+                zoomLabel.text = "${(curScale * 100f).roundToInt()} %"
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
@@ -706,10 +976,18 @@ class ViewerActivity : Activity() {
                     )
                     bottomBar.visibility = View.VISIBLE
                     applyWebBg()
+                    pushTopOffset()
+                    // Zoom que tenía la pestaña
+                    val sc = restoreScale
+                    restoreScale = null
+                    if (sc != null && abs(sc - 1f) > 0.05f) {
+                        view.postDelayed({ if (!isDestroyed) view.zoomBy((sc / curScale.coerceAtLeast(0.05f)).coerceIn(0.05f, 20f)) }, 60)
+                    }
                 }
                 if (wantCapture && url != null && url.startsWith("file:")) {
                     wantCapture = false
-                    view.postDelayed({ captureThumb() }, 1500)
+                    val g = gen
+                    view.postDelayed({ if (g == gen) captureThumb() }, 1500)
                 }
                 val f = restoreFrac
                 if (f != null && url != null && url.startsWith("file:")) {
@@ -721,7 +999,7 @@ class ViewerActivity : Activity() {
                                     "window.scrollTo(0,Math.max(0,h*" + f + "));})()", null
                             )
                         }
-                    }, 150)
+                    }, 220)
                 }
             }
 
@@ -747,7 +1025,7 @@ class ViewerActivity : Activity() {
         val f = File(dir, "vista.html")
         f.writeText(html)
         runOnUiThread {
-            if (!isDestroyed) {
+            if (!isDestroyed && docDir == dir) {
                 applyWebBg()
                 updateTopBar()
                 webView.loadUrl(Uri.fromFile(f).toString())
@@ -773,9 +1051,19 @@ class ViewerActivity : Activity() {
 
     private fun buildTopBar(root: FrameLayout) {
         topBox = Ui.column(this).apply { setBackgroundColor(Ui.SURFACE) }
+        tabScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(24))
+            overScrollMode = View.OVER_SCROLL_NEVER
+            visibility = View.GONE
+        }
+        tabStrip = Ui.row(this).apply { setPadding(dp(8), dp(8), dp(8), 0) }
+        tabScroll.addView(tabStrip)
+        topBox.addView(tabScroll, Ui.lp(Ui.MATCH, Ui.WRAP))
         val bar = Ui.row(this).apply { setPadding(dp(4), dp(6), dp(4), dp(6)) }
         titleRow = bar
-        bar.addView(Ui.iconButton(this, R.drawable.ic_back, "Volver", Ui.TEXT_SOFT) { finish() })
+        bar.addView(Ui.iconButton(this, R.drawable.ic_back, "Volver al inicio", Ui.TEXT_SOFT) { goHome() })
         panelBtn = Ui.iconButton(this, R.drawable.ic_panel, "Panel lateral", Ui.TEXT_SOFT) { openPanel() }
         panelBtn.visibility = View.GONE
         bar.addView(panelBtn)
@@ -1640,7 +1928,7 @@ class ViewerActivity : Activity() {
         when {
             panel != null -> closePanel()
             searching -> closeSearch()
-            else -> super.onBackPressed()
+            else -> goHome()
         }
     }
 

@@ -83,7 +83,7 @@ body{background:#f4f4f4;color:#161616;font-family:sans-serif;-webkit-text-size-a
 body.pdf{background:#0b0b0e;padding:6px 0}
 body.img{background:#0b0b0e}
 /* Espacio para las barras de arriba y de abajo del visor */
-.spt{height:60px}.spb{height:84px}
+.spt{height:var(--top,60px)}.spb{height:84px}
 body.img .spt,body.img .spb,body.msg .spt,body.msg .spb{display:none}
 .pg{width:100%;background:#fff;margin:0 0 6px 0;box-shadow:0 1px 3px rgba(0,0,0,.35)}
 .pg img{width:100%;height:100%;display:block}
@@ -149,7 +149,7 @@ table.pt td{overflow:hidden}
 .snotes{background:#fff8dc;color:#333;margin:-6px 4px 18px;padding:8px 10px;border-radius:6px;font-size:14px;white-space:pre-wrap;line-height:1.4}
 
 /* Barras del visor visibles: la hoja de cálculo deja sitio arriba y abajo */
-body.bars{--tb:60px;--bb:84px}
+body.bars{--tb:var(--top,60px);--bb:84px}
 
 /*
  Modo oscuro de Word, Excel y texto. Se invierten los colores del documento
@@ -225,7 +225,7 @@ body.thumbs .sl.curthumb{outline:2px solid #c3b4ff;outline-offset:2px}
   }
   window.addEventListener('scroll',function(){ if(!tick){ tick=true; requestAnimationFrame(up); } },{passive:true});
   up();
-  window.goPage=function(n){ var s=ss[n-1]; if(s){ window.scrollTo(0,Math.max(0,topOf(s)-68)); } };
+  window.goPage=function(n){ var s=ss[n-1]; if(s){ window.scrollTo(0,Math.max(0,topOf(s)-(window.__top||60)-8)); } };
 })();
 """
 
@@ -285,7 +285,7 @@ function showSheet(i){
   measure();
   window.goPage=function(n){
     var d=document.getElementById('p'+(n-1));
-    if(d){ window.scrollTo(0,Math.max(0,d.getBoundingClientRect().top+window.scrollY-68)); }
+    if(d){ window.scrollTo(0,Math.max(0,d.getBoundingClientRect().top+window.scrollY-(window.__top||60)-8)); }
   };
 })();
 """
@@ -325,6 +325,8 @@ function showSheet(i){
 })();
 window.setDark=function(on){ document.body.classList.toggle('dark',!!on); };
 window.setBars=function(on){ document.body.classList.toggle('bars',!!on); };
+window.__top=60;
+window.setTop=function(px){ window.__top=px; document.documentElement.style.setProperty('--top',px+'px'); };
 window.getFrac=function(){ var h=document.documentElement.scrollHeight-window.innerHeight; return h>0?window.scrollY/h:0; };
 window.goFrac=function(f){ var h=document.documentElement.scrollHeight-window.innerHeight; window.scrollTo(0,Math.max(0,h*f)); };
 """
@@ -429,7 +431,7 @@ window.goFrac=function(f){ var h=document.documentElement.scrollHeight-window.in
   };
   window.goOutline=function(i){
     var e=document.querySelector('[data-oi="'+i+'"]');
-    if(e) window.scrollTo(0,Math.max(0,e.getBoundingClientRect().top+window.scrollY-72));
+    if(e) window.scrollTo(0,Math.max(0,e.getBoundingClientRect().top+window.scrollY-(window.__top||60)-12));
   };
   window.getSheets=function(){
     var b=document.querySelectorAll('.tabs button'),out=[],on=0;

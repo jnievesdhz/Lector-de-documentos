@@ -99,12 +99,13 @@ object Docs {
         return d
     }
 
-    /** Borra copias temporales de más de un día. */
+    /** Borra copias temporales de más de un día, menos las de las pestañas abiertas. */
     fun cleanOld(ctx: Context) {
         try {
+            val keep = Tabs.dirs(ctx)
             val limit = System.currentTimeMillis() - 24L * 3600L * 1000L
             File(ctx.cacheDir, "docs").listFiles()?.forEach {
-                if (it.lastModified() < limit) it.deleteRecursively()
+                if (it.name !in keep && it.lastModified() < limit) it.deleteRecursively()
             }
         } catch (_: Exception) {
         }

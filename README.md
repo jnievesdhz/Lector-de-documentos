@@ -41,4 +41,4 @@ Las versiones nuevas se instalan encima de la anterior (están firmadas con la m
 
 ## Próximas etapas
 
-4. Interfaz nueva (en curso): visor con barras que se esconden y herramientas abajo, modo oscuro para documentos, búsqueda de texto, pestañas y panel lateral
+4. Interfaz nueva: explorador con recientes, favoritos y carpetas, visor con barras que se esconden, modo oscuro, búsqueda de texto, panel lateral y pestañas

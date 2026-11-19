@@ -75,6 +75,8 @@ class MainActivity : Activity() {
     private var loadToken = 0
 
     private lateinit var searchRow: LinearLayout
+    private lateinit var openBar: LinearLayout
+    private lateinit var openBarText: TextView
     private lateinit var searchField: EditText
     private val tabViews = ArrayList<TextView>()
     private lateinit var folderBar: LinearLayout
@@ -154,6 +156,29 @@ class MainActivity : Activity() {
         header.addView(Ui.iconButton(this, R.drawable.ic_search, "Buscar archivos") { openSearch() })
         header.addView(Ui.iconButton(this, R.drawable.ic_more, "Más opciones") { showMore(it) })
         col.addView(header, Ui.lp(Ui.MATCH, Ui.WRAP))
+
+        // Aviso de documentos abiertos en el visor (pestañas guardadas)
+        openBar = Ui.row(this).apply {
+            background = Ui.ripple(
+                this@MainActivity,
+                Ui.round(this@MainActivity, Ui.ACTIVE_BG, 12f, Ui.ACTIVE_BORDER, 1f), 12f
+            )
+            setPadding(dp(14), 0, dp(10), 0)
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, ViewerActivity::class.java))
+            }
+        }
+        openBar.addView(Ui.icon(this, R.drawable.ic_file_doc, Ui.ACTIVE_TEXT, 20))
+        openBarText = Ui.text(this, "", 14.5f, Ui.ACTIVE_TEXT, bold = true)
+        openBar.addView(openBarText, Ui.lp(0, Ui.WRAP, 1f).apply { marginStart = dp(12) })
+        openBar.addView(Ui.text(this, "Volver", 13.5f, Ui.ACTIVE_TEXT), Ui.lp(Ui.WRAP, Ui.WRAP))
+        openBar.addView(Ui.icon(this, R.drawable.ic_chevron, Ui.ACTIVE_TEXT, 18), Ui.lp(dp(18), dp(18)).apply {
+            marginStart = dp(4)
+        })
+        col.addView(openBar, Ui.lp(Ui.MATCH, dp(48)).apply { setMargins(dp(16), dp(10), dp(16), 0) })
 
         // Buscador (oculto hasta tocar la lupa)
         searchRow = Ui.row(this).apply {
@@ -340,6 +365,9 @@ class MainActivity : Activity() {
         matchesFilter(it.kind) && (query.isEmpty() || it.name.contains(query, ignoreCase = true))
 
     private fun refresh() {
+        val open = Tabs.count(this)
+        openBar.visibility = if (open > 0) View.VISIBLE else View.GONE
+        openBarText.text = if (open == 1) "1 documento abierto" else "$open documentos abiertos"
         Tab.values().forEachIndexed { i, t ->
             val tv = tabViews[i]
             val on = t == tab
