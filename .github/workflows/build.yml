@@ -3,6 +3,7 @@ name: Construir APK
 on:
   push:
     branches: [ main ]
+    paths-ignore: [ 'pruebas/**' ]
   workflow_dispatch:
 
 permissions:
