@@ -11,6 +11,7 @@ object Html {
      * Así el texto ocupa el mismo espacio que en PowerPoint o Word y no se monta.
      */
     const val FONT_CSS = """
+@import url('file:///android_asset/fonts/extra.css');
 @font-face{font-family:'Calibri';src:url('file:///android_asset/fonts/Carlito-Regular.ttf');font-weight:normal;font-style:normal}
 @font-face{font-family:'Calibri';src:url('file:///android_asset/fonts/Carlito-Bold.ttf');font-weight:bold;font-style:normal}
 @font-face{font-family:'Calibri';src:url('file:///android_asset/fonts/Carlito-Italic.ttf');font-weight:normal;font-style:italic}
@@ -195,21 +196,106 @@ body.thumbs .sl.curthumb{outline:2px solid #c3b4ff;outline-offset:2px}
     /** Ajusta cada diapositiva al ancho de la pantalla. */
     const val SLIDES_SCRIPT = """
 (function(){
-  // Encoge el texto que no cabe en su cuadro (PowerPoint lo hace solo; en el celular las fuentes cambian)
+  /*
+   Red de seguridad para el texto que no cabe en su cuadro. En el celular las fuentes
+   no siempre son las del archivo y el texto puede ocupar más.
+   - Cuadros con "ajustar texto al desbordar" de PowerPoint (data-fit): se encoge hasta que quepa.
+   - Los demás: PowerPoint deja que el texto se salga, así que solo se encoge (hasta 70 %)
+     si lo que se sale tapa el texto de otro cuadro.
+  */
+  var rg=document.createRange();
+  function lines(el){
+    // Solo los renglones de texto (no las cajas de los párrafos)
+    var w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT,null),n,out=[];
+    while((n=w.nextNode())){
+      if(!/\S/.test(n.nodeValue)) continue;
+      rg.selectNodeContents(n);
+      var rs=rg.getClientRects();
+      for(var i=0;i<rs.length;i++){ if(rs[i].width>0.5&&rs[i].height>0.5) out.push(rs[i]); }
+    }
+    return out;
+  }
+  function area(t){
+    var r=t.getBoundingClientRect(),k=r.width/(t.offsetWidth||1),cs=getComputedStyle(t);
+    var tol=1.5*k;
+    return {l:r.left+parseFloat(cs.paddingLeft)*k-tol,r:r.right-parseFloat(cs.paddingRight)*k+tol,
+            t:r.top+parseFloat(cs.paddingTop)*k-tol,b:r.bottom-parseFloat(cs.paddingBottom)*k+tol,k:k};
+  }
+  function outside(t,inner){
+    var a=area(t),ls=lines(inner),out=[];
+    var nw=t.hasAttribute('data-nw');
+    for(var i=0;i<ls.length;i++){
+      // Las letras pueden asomar un poco por fuera de su renglón: se tolera un cuarto de renglón
+      var q=ls[i],ty=q.height*0.25;
+      if(q.top<a.t-ty||q.bottom>a.b+ty||(nw&&(q.left<a.l||q.right>a.r))) out.push(q);
+    }
+    return out;
+  }
+  function hit(p,q){
+    var iw=Math.min(p.right,q.right)-Math.max(p.left,q.left),ih=Math.min(p.bottom,q.bottom)-Math.max(p.top,q.top);
+    return iw>2&&ih>0.3*Math.min(p.height,q.height);
+  }
+  function covers(t,inner,all){
+    var out=outside(t,inner);
+    if(!out.length) return false;
+    for(var j=0;j<all.length;j++){
+      var o=all[j];
+      if(o.t===t) continue;
+      var ls=lines(o.i);
+      for(var x=0;x<out.length;x++) for(var y=0;y<ls.length;y++){ if(hit(out[x],ls[y])) return true; }
+    }
+    return false;
+  }
+  function shrink(inner,min,ok){
+    if(ok()) return;
+    inner.style.zoom=min;
+    if(!ok()) return;
+    var lo=min,hi=1;
+    for(var n=0;n<7;n++){
+      var m=(lo+hi)/2;
+      inner.style.zoom=m;
+      if(ok()) lo=m; else hi=m;
+    }
+    inner.style.zoom=lo;
+  }
+  function rotated(t){
+    for(var e=t;e&&!e.classList.contains('si');e=e.parentElement){
+      var tr=e.style.transform;
+      if(tr&&tr.indexOf('rotate')>=0) return true;
+    }
+    return false;
+  }
   function fitText(){
-    var fs=document.querySelectorAll('.txt[data-fit]');
-    for(var k=0;k<fs.length;k++){
-      var t=fs[k], inner=t.firstElementChild;
-      if(!inner) continue;
-      inner.style.zoom='';
-      var cs=getComputedStyle(t);
-      var avail=t.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
-      var h=inner.offsetHeight;
-      if(avail>0 && h>avail+1){ inner.style.zoom=Math.max(0.45,avail/h*0.98); }
+    var si=document.querySelectorAll('.si');
+    for(var s=0;s<si.length;s++){
+      var ts=si[s].querySelectorAll('.txt'),all=[];
+      for(var k=0;k<ts.length;k++){
+        var inner=ts[k].firstElementChild;
+        if(!inner) continue;
+        inner.style.zoom='';
+        if(!/\S/.test(inner.textContent)||rotated(ts[k])) continue;
+        all.push({t:ts[k],i:inner});
+      }
+      for(var k=0;k<all.length;k++){
+        var t=all[k].t,i=all[k].i;
+        if(t.hasAttribute('data-fit')){
+          shrink(i,0.45,function(){ return outside(t,i).length===0; });
+        } else if(covers(t,i,all)){
+          shrink(i,0.7,function(){ return !covers(t,i,all); });
+        }
+      }
     }
   }
+  window.fitText=fitText;
   fitText();
-  if(document.fonts && document.fonts.ready){ document.fonts.ready.then(function(){ fitText(); }); }
+  // Se repite cuando terminan de cargar las fuentes (vienen de extra.css, que llega después)
+  var fq=0;
+  function refit(){ clearTimeout(fq); fq=setTimeout(fitText,60); }
+  if(document.fonts){
+    if(document.fonts.ready) document.fonts.ready.then(refit);
+    if(document.fonts.addEventListener) document.fonts.addEventListener('loadingdone',refit);
+  }
+  window.addEventListener('load',refit);
   function fit(){
     var ss=document.querySelectorAll('.sl');
     for(var k=0;k<ss.length;k++){

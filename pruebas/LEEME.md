@@ -7,3 +7,6 @@
 - `shot.py`: convierte un documento, arma la página con las constantes de `Html.kt` (con un `window.Android` falso)
   y la fotografía con Playwright. Uso: `python3 shot.py doc.xlsx salida/ 420 "showSheet(1)" dark`.
 - Referencia: `soffice --headless --convert-to pdf doc.docx` y `pdftoppm -png`.
+- `gen_pptx_fuentes.py`: presentación con muestras de fuentes (Google, Canva y equivalentes de Microsoft)
+  y con los casos de la red de seguridad del texto desbordado (cuadro que tapa a otro, cuadro que se sale
+  sin tapar nada, "reducir texto al desbordar"). Uso: `python3 gen_pptx_fuentes.py fuentes.pptx`.

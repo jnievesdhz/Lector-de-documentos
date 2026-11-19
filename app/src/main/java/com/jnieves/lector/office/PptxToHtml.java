@@ -1201,6 +1201,11 @@ public final class PptxToHtml {
         double size = (t.sz != null ? t.sz : 1800) / 100.0 * scale;
         c.append("font-size:").append(r1(size)).append("pt;");
         if (Boolean.TRUE.equals(t.b)) c.append("font-weight:bold;");
+        else {
+            // "Montserrat SemiBold", "Segoe UI Light"...: el peso va en el nombre
+            int w = faceWeight(themeFace(t.font != null ? t.font : defFont, ctx));
+            if (w > 0) c.append("font-weight:").append(w).append(';');
+        }
         if (Boolean.TRUE.equals(t.i)) c.append("font-style:italic;");
         boolean u = Boolean.TRUE.equals(t.u), s = Boolean.TRUE.equals(t.strike);
         if (u || s) c.append("text-decoration:").append(u ? "underline " : "").append(s ? "line-through" : "").append(';');
@@ -1215,23 +1220,59 @@ public final class PptxToHtml {
         return c.toString();
     }
 
-    private static String fontFamily(String face, Ctx ctx) {
+    private static String themeFace(String face, Ctx ctx) {
         String f = face;
         if (f != null && ctx.theme != null) {
             if (f.startsWith("+mj")) f = ctx.theme.major;
             else if (f.startsWith("+mn")) f = ctx.theme.minor;
         }
-        if (f == null || f.startsWith("+")) return "sans-serif";
+        return f == null || f.startsWith("+") ? null : f.trim();
+    }
+
+    private static final String[][] WEIGHTS = {
+            {"thin", "100"}, {"hairline", "100"}, {"extralight", "200"}, {"ultralight", "200"},
+            {"extra light", "200"}, {"semilight", "350"}, {"light", "300"}, {"book", "400"}, {"regular", "400"},
+            {"medium", "500"}, {"semibold", "600"}, {"demibold", "600"}, {"semi bold", "600"}, {"demi", "600"},
+            {"extrabold", "800"}, {"ultrabold", "800"}, {"extra bold", "800"}, {"bold", "700"},
+            {"black", "900"}, {"heavy", "900"}};
+
+    /** Peso escrito al final del nombre de la fuente ("Poppins Light" = 300), o 0. */
+    static int faceWeight(String f) {
+        if (f == null) return 0;
+        String l = f.toLowerCase(Locale.ROOT);
+        for (String[] w : WEIGHTS) {
+            if (l.endsWith(" " + w[0]) && l.length() > w[0].length() + 1) return Integer.parseInt(w[1]);
+        }
+        return 0;
+    }
+
+    /** El nombre sin el peso del final ("Poppins Light" -> "Poppins"), o null si no tiene. */
+    static String faceBase(String f) {
+        if (f == null) return null;
+        String l = f.toLowerCase(Locale.ROOT);
+        for (String[] w : WEIGHTS) {
+            if (l.endsWith(" " + w[0]) && l.length() > w[0].length() + 1) {
+                return f.substring(0, f.length() - w[0].length() - 1).trim();
+            }
+        }
+        return null;
+    }
+
+    private static String fontFamily(String face, Ctx ctx) {
+        String f = themeFace(face, ctx);
+        if (f == null || f.isEmpty()) return "sans-serif";
         String l = f.toLowerCase(Locale.ROOT);
         String generic = "sans-serif";
         if (l.contains("courier") || l.contains("consolas") || l.contains("mono")) generic = "monospace";
         else if (l.contains("condensed") || l.contains("narrow") || l.contains("compressed")) generic = "sans-serif-condensed,sans-serif";
         else if (l.contains("times") || l.contains("cambria") || l.contains("georgia") || l.contains("garamond")
-                || l.contains("palatino") || l.contains("book") || (l.contains("serif") && !l.contains("sans"))) {
+                || l.contains("palatino") || l.contains("antiqua") || l.contains("book") || l.contains("schoolbook")
+                || (l.contains("serif") && !l.contains("sans"))) {
             generic = "serif";
         }
         String safe = f.replace("'", "").replace("\"", "").replace(";", "");
-        return "'" + safe + "'," + generic;
+        String base = faceBase(safe);
+        return "'" + safe + "'," + (base != null ? "'" + base + "'," : "") + generic;
     }
 
     /** Traduce viñetas de fuentes de símbolos (Wingdings, Symbol) a caracteres normales. */

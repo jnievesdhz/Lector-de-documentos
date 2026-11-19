@@ -294,6 +294,14 @@ class ViewerActivity : Activity() {
                 load(Uri.parse(t.src), t.entry, t, g)
                 return@Thread
             }
+            // Una conversión hecha por una versión anterior de la app se rehace con los conversores nuevos
+            if (html.lastModified() < appUpdated()) {
+                try {
+                    officePage(docKind, file, dir)?.let { html.writeText(it) }
+                } catch (_: Throwable) {
+                }
+                if (g != gen) return@Thread
+            }
             if (docKind == Kind.PDF) {
                 val sizes = try {
                     openRenderer(file)
@@ -320,6 +328,22 @@ class ViewerActivity : Activity() {
                 }
             }
         }.start()
+    }
+
+    /** Página HTML de un documento de Office ya copiado (null si no es de Office). */
+    private fun officePage(kind: Kind?, file: File, dir: File): String? = when (kind) {
+        Kind.DOCX -> page(DocxToHtml.convert(file, dir), "", "docx")
+        Kind.XLSX -> page(XlsxToHtml.convert(file), Html.SHEET_SCRIPT, "sheet", "0.25")
+        Kind.CSV -> page(CsvToHtml.convert(readText(file).first), Html.SHEET_SCRIPT, "sheet", "0.25")
+        Kind.PPTX -> page(PptxToHtml.convert(file, dir), Html.SLIDES_SCRIPT, "pptx")
+        else -> null
+    }
+
+    /** Cuándo se instaló o actualizó la app por última vez. */
+    private fun appUpdated(): Long = try {
+        packageManager.getPackageInfo(packageName, 0).lastUpdateTime
+    } catch (_: Exception) {
+        0L
     }
 
     /** ¿El archivo original cambió de tamaño desde que se abrió? */
