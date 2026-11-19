@@ -74,6 +74,7 @@ public final class PptxToHtml {
 
     private static final class Theme {
         final Map<String, String> colors = new HashMap<>();
+        final List<Long> lineWidths = new ArrayList<>();
         String major, minor;
     }
 
@@ -112,6 +113,9 @@ public final class PptxToHtml {
                 if (v == null) continue;
                 String hex = "sysClr".equals(name(v)) ? attr(v, "lastClr") : val(v);
                 if (isHex6(hex)) t.colors.put(name(c), hex);
+            }
+            for (Element ln : kids(kid(kid(te, "fmtScheme"), "lnStyleLst"))) {
+                t.lineWidths.add(parseLong(attr(ln, "w"), 9525));
             }
             Element fs = kid(te, "fontScheme");
             t.major = attr(kid(kid(fs, "majorFont"), "latin"), "typeface");
@@ -400,6 +404,20 @@ public final class PptxToHtml {
         }
 
         StringBuilder css = new StringBuilder(pos(b, !hasText));
+        Element custGeom = kid(spPr, "custGeom");
+        String geo = custGeom != null ? "" : geometry(prst, b);
+        String svg = null;
+        if (custGeom != null) {
+            svg = customGeometry(custGeom, fillColor(spPr, style, ctx), outline(spPr, style, ctx), b);
+        }
+        if (custGeom != null || geo == null) {
+            // Forma libre (va en SVG) o forma que no se sabe dibujar: solo se muestra el texto
+            sb.append("<div class=\"shp\" style=\"").append(css).append("\">");
+            if (svg != null) sb.append(svg);
+            if (hasText) shapeText(sp, ph, phType, layoutPh, masterPh, txBody, style, ctx, part, sb);
+            sb.append("</div>");
+            return;
+        }
         String fill = fillCss(spPr, ctx, part);
         if (fill == null && layoutPh != null) fill = fillCss(kid(layoutPh, "spPr"), ctx, ctx.layout);
         if (fill == null && style != null) {
@@ -412,10 +430,16 @@ public final class PptxToHtml {
         if (fill != null) css.append(fill);
         String border = lineCss(spPr, style, ctx);
         if (border != null) css.append(border);
-        css.append(geometry(prst, b));
+        css.append(geo);
 
         sb.append("<div class=\"shp\" style=\"").append(css).append("\">");
-        if (hasText) {
+        if (hasText) shapeText(sp, ph, phType, layoutPh, masterPh, txBody, style, ctx, part, sb);
+        sb.append("</div>");
+    }
+
+    private void shapeText(Element sp, Element ph, String phType, Element layoutPh, Element masterPh, Element txBody,
+                           Element style, Ctx ctx, Part part, StringBuilder sb) {
+        {
             List<Element> lst = new ArrayList<>();
             lst.add(kid(txBody, "lstStyle"));
             if (layoutPh != null) lst.add(kid(kid(layoutPh, "txBody"), "lstStyle"));
@@ -445,7 +469,6 @@ public final class PptxToHtml {
             textBox(txBody, lst, bodies, fontColor, fontFace != null ? fontFace : (isTitle ? "+mj-lt" : "+mn-lt"),
                     ctx, part, sb);
         }
-        sb.append("</div>");
     }
 
     private static boolean hasText(Element txBody) {
@@ -462,52 +485,154 @@ public final class PptxToHtml {
         return false;
     }
 
-    private String geometry(String prst, Box b) {
+    /** CSS para dibujar la forma; null si la forma no se sabe dibujar. */
+    private static String geometry(String prst, Box b) {
         if (prst == null) return "";
         double m = Math.min(b.w, b.h);
         switch (prst) {
-            case "roundRect": return "border-radius:" + r1(m * 0.1667) + "px;";
-            case "ellipse": return "border-radius:50%;";
+            case "rect": case "flowChartProcess": case "wedgeRectCallout": case "snip1Rect": case "snip2SameRect":
+            case "snip2DiagRect": case "snipRoundRect": case "round1Rect": case "round2SameRect": case "round2DiagRect":
+            case "plaque": case "frame": case "bevel": case "foldedCorner": case "can": case "cube": case "textBox":
+            case "flowChartPredefinedProcess": case "flowChartDocument": case "flowChartMultidocument":
+            case "flowChartManualInput": case "flowChartInternalStorage": case "borderCallout1": case "borderCallout2":
+            case "accentCallout1": case "callout1": case "callout2":
+                return "";
+            case "roundRect": case "wedgeRoundRectCallout": case "flowChartAlternateProcess":
+                return "border-radius:" + r1(m * 0.1667) + "px;";
+            case "ellipse": case "wedgeEllipseCallout": case "cloud": case "cloudCallout": case "donut":
+            case "flowChartConnector": case "flowChartOr": case "flowChartSummingJunction":
+                return "border-radius:50%;";
             case "flowChartTerminator": return "border-radius:" + r1(m / 2) + "px;";
-            case "triangle": return "clip-path:polygon(50% 0,100% 100%,0 100%);";
+            case "triangle": case "flowChartExtract": return "clip-path:polygon(50% 0,100% 100%,0 100%);";
+            case "flowChartMerge": return "clip-path:polygon(0 0,100% 0,50% 100%);";
             case "rtTriangle": return "clip-path:polygon(0 0,100% 100%,0 100%);";
-            case "diamond":
-            case "flowChartDecision": return "clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);";
-            case "parallelogram":
-            case "flowChartInputOutput": return "clip-path:polygon(25% 0,100% 0,75% 100%,0 100%);";
-            case "trapezoid": return "clip-path:polygon(25% 0,75% 0,100% 100%,0 100%);";
+            case "diamond": case "flowChartDecision": return "clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);";
+            case "parallelogram": case "flowChartInputOutput": return "clip-path:polygon(25% 0,100% 0,75% 100%,0 100%);";
+            case "trapezoid": case "flowChartManualOperation": return "clip-path:polygon(25% 0,75% 0,100% 100%,0 100%);";
             case "homePlate": return "clip-path:polygon(0 0,80% 0,100% 50%,80% 100%,0 100%);";
             case "chevron": return "clip-path:polygon(0 0,80% 0,100% 50%,80% 100%,0 100%,20% 50%);";
-            case "rightArrow": return "clip-path:polygon(0 25%,70% 25%,70% 0,100% 50%,70% 100%,70% 75%,0 75%);";
+            case "rightArrow": case "notchedRightArrow": case "stripedRightArrow":
+                return "clip-path:polygon(0 25%,70% 25%,70% 0,100% 50%,70% 100%,70% 75%,0 75%);";
             case "leftArrow": return "clip-path:polygon(100% 25%,30% 25%,30% 0,0 50%,30% 100%,30% 75%,100% 75%);";
             case "upArrow": return "clip-path:polygon(25% 100%,25% 30%,0 30%,50% 0,100% 30%,75% 30%,75% 100%);";
             case "downArrow": return "clip-path:polygon(25% 0,75% 0,75% 70%,100% 70%,50% 100%,0 70%,25% 70%);";
+            case "leftRightArrow": return "clip-path:polygon(0 50%,20% 0,20% 25%,80% 25%,80% 0,100% 50%,80% 100%,80% 75%,20% 75%,20% 100%);";
+            case "upDownArrow": return "clip-path:polygon(50% 0,100% 20%,75% 20%,75% 80%,100% 80%,50% 100%,0 80%,25% 80%,25% 20%,0 20%);";
             case "hexagon": return "clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%);";
             case "octagon": return "clip-path:polygon(30% 0,70% 0,100% 30%,100% 70%,70% 100%,30% 100%,0 70%,0 30%);";
             case "pentagon": return "clip-path:polygon(50% 0,100% 38%,82% 100%,18% 100%,0 38%);";
-            default: return "";
+            case "flowChartOffpageConnector": return "clip-path:polygon(0 0,100% 0,100% 80%,50% 100%,0 80%);";
+            case "star4": return "clip-path:polygon(50% 0,62% 38%,100% 50%,62% 62%,50% 100%,38% 62%,0 50%,38% 38%);";
+            case "star5": return "clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);";
+            case "plus": case "mathPlus": return "clip-path:polygon(35% 0,65% 0,65% 35%,100% 35%,100% 65%,65% 65%,65% 100%,35% 100%,35% 65%,0 65%,0 35%,35% 35%);";
+            default: return null;
         }
     }
 
-    private void line(Box b, Element spPr, Element style, Ctx ctx, StringBuilder sb) {
-        String color = "#000";
-        double width = 1;
-        Element ln = kid(spPr, "ln");
-        boolean set = false;
-        if (ln != null) {
-            if (kid(ln, "noFill") != null) return;
-            String c = colorOf(kid(ln, "solidFill"), ctx);
-            if (c != null) {
-                color = c;
-                set = true;
+    /** Dibuja una forma libre (custGeom) como SVG. */
+    private String customGeometry(Element custGeom, String fill, Object[] outline, Box b) {
+        StringBuilder svg = new StringBuilder("<svg class=\"cg\" viewBox=\"0 0 ").append(r1(Math.max(b.w, 1))).append(' ')
+                .append(r1(Math.max(b.h, 1))).append("\" preserveAspectRatio=\"none\">");
+        boolean any = false;
+        for (Element path : kids(kid(custGeom, "pathLst"))) {
+            if (!"path".equals(name(path))) continue;
+            double pw = parseLong(attr(path, "w"), 0), ph = parseLong(attr(path, "h"), 0);
+            double sx = pw > 0 ? b.w / pw : 1 / EMU_PX, sy = ph > 0 ? b.h / ph : 1 / EMU_PX;
+            StringBuilder d = new StringBuilder();
+            double cx = 0, cy = 0;
+            for (Element cmd : kids(path)) {
+                List<Element> pts = new ArrayList<>();
+                for (Element pt : kids(cmd)) if ("pt".equals(name(pt))) pts.add(pt);
+                switch (name(cmd)) {
+                    case "moveTo":
+                    case "lnTo":
+                        if (pts.isEmpty()) break;
+                        cx = px(pts.get(0), "x");
+                        cy = px(pts.get(0), "y");
+                        d.append(name(cmd).equals("moveTo") ? 'M' : 'L').append(r1(cx * sx)).append(',').append(r1(cy * sy)).append(' ');
+                        break;
+                    case "cubicBezTo":
+                        if (pts.size() < 3) break;
+                        d.append('C');
+                        for (Element pt : pts) d.append(r1(px(pt, "x") * sx)).append(',').append(r1(px(pt, "y") * sy)).append(' ');
+                        cx = px(pts.get(2), "x");
+                        cy = px(pts.get(2), "y");
+                        break;
+                    case "quadBezTo":
+                        if (pts.size() < 2) break;
+                        d.append('Q');
+                        for (Element pt : pts) d.append(r1(px(pt, "x") * sx)).append(',').append(r1(px(pt, "y") * sy)).append(' ');
+                        cx = px(pts.get(1), "x");
+                        cy = px(pts.get(1), "y");
+                        break;
+                    case "arcTo": {
+                        double wr = parseLong(attr(cmd, "wR"), 0), hr = parseLong(attr(cmd, "hR"), 0);
+                        double st = Math.toRadians(parseLong(attr(cmd, "stAng"), 0) / 60000.0);
+                        double sw = Math.toRadians(parseLong(attr(cmd, "swAng"), 0) / 60000.0);
+                        double ox = cx - wr * Math.cos(st), oy = cy - hr * Math.sin(st);
+                        double ex = ox + wr * Math.cos(st + sw), ey = oy + hr * Math.sin(st + sw);
+                        d.append('A').append(r1(wr * sx)).append(',').append(r1(hr * sy)).append(" 0 ")
+                                .append(Math.abs(sw) > Math.PI ? 1 : 0).append(',').append(sw > 0 ? 1 : 0).append(' ')
+                                .append(r1(ex * sx)).append(',').append(r1(ey * sy)).append(' ');
+                        cx = ex;
+                        cy = ey;
+                        break;
+                    }
+                    case "close":
+                        d.append("Z ");
+                        break;
+                    default:
+                        break;
+                }
             }
-            long w = parseLong(attr(ln, "w"), -1);
-            if (w > 0) width = Math.max(1, w / EMU_PX);
+            if (d.length() == 0) continue;
+            any = true;
+            boolean noFill = "none".equals(attr(path, "fill"));
+            boolean noStroke = "0".equals(attr(path, "stroke")) || "false".equals(attr(path, "stroke"));
+            svg.append("<path d=\"").append(d.toString().trim()).append("\" fill=\"")
+                    .append(noFill || fill == null ? "none" : fill).append('"');
+            if (!noStroke && outline != null && outline[0] != null) {
+                svg.append(" stroke=\"").append(outline[0]).append("\" stroke-width=\"").append(r1((Double) outline[1]))
+                        .append("\" vector-effect=\"non-scaling-stroke\"");
+            }
+            svg.append("/>");
         }
-        if (!set && style != null) {
-            String c = colorOf(kid(style, "lnRef"), ctx);
-            if (c != null) color = c;
+        svg.append("</svg>");
+        return any ? svg.toString() : "";
+    }
+
+    private static double px(Element pt, String a) {
+        return parseLong(attr(pt, a), 0);
+    }
+
+    /** Color plano de un relleno (para SVG). */
+    private String fillColor(Element spPr, Element style, Ctx ctx) {
+        if (spPr != null) {
+            for (Element c : kids(spPr)) {
+                switch (name(c)) {
+                    case "noFill": return null;
+                    case "solidFill": return colorOf(c, ctx);
+                    case "gradFill": {
+                        Element gs = kid(kid(c, "gsLst"), "gs");
+                        return colorOf(gs, ctx);
+                    }
+                    case "pattFill": return colorOf(kid(c, "fgClr"), ctx);
+                    default: break;
+                }
+            }
         }
+        if (style != null) {
+            Element fr = kid(style, "fillRef");
+            if (fr != null && parseInt(attr(fr, "idx"), 0) > 0) return colorOf(fr, ctx);
+        }
+        return null;
+    }
+
+    private void line(Box b, Element spPr, Element style, Ctx ctx, StringBuilder sb) {
+        Object[] o = outline(spPr, style, ctx);
+        if (o != null && o[0] == null) return;
+        String color = o != null ? (String) o[0] : "#000";
+        double width = o != null ? (Double) o[1] : 1;
         double w = Math.max(b.w, 1), h = Math.max(b.h, 1);
         double x1 = b.flipH ? w : 0, x2 = b.flipH ? 0 : w, y1 = b.flipV ? h : 0, y2 = b.flipV ? 0 : h;
         if (b.w < 1) x1 = x2 = 0.5;
@@ -568,22 +693,42 @@ public final class PptxToHtml {
         return s.append(");").toString();
     }
 
-    private String lineCss(Element spPr, Element style, Ctx ctx) {
-        Element ln = kid(spPr, "ln");
-        if (ln != null) {
-            if (kid(ln, "noFill") != null) return "";
-            String c = colorOf(kid(ln, "solidFill"), ctx);
-            long w = parseLong(attr(ln, "w"), 12700);
-            if (c != null) return "border:" + r1(Math.max(1, w / EMU_PX)) + "px solid " + c + ";";
-        }
+    private static long themeLineWidth(Ctx ctx, int idx) {
+        if (ctx.theme != null && idx >= 1 && idx <= ctx.theme.lineWidths.size()) return ctx.theme.lineWidths.get(idx - 1);
+        return idx == 1 ? 9525 : idx == 2 ? 25400 : 38100;
+    }
+
+    /** Color y grosor (px) del contorno: {color, ancho}; ancho 0 = sin contorno; null = sin definir. */
+    private Object[] outline(Element spPr, Element style, Ctx ctx) {
+        String refColor = null;
+        long refW = -1;
         if (style != null) {
             Element lr = kid(style, "lnRef");
-            if (lr != null && parseInt(attr(lr, "idx"), 0) > 0) {
-                String c = colorOf(lr, ctx);
-                if (c != null) return "border:1px solid " + c + ";";
+            int idx = lr != null ? parseInt(attr(lr, "idx"), 0) : 0;
+            if (idx > 0) {
+                refColor = colorOf(lr, ctx);
+                refW = themeLineWidth(ctx, idx);
             }
         }
+        Element ln = kid(spPr, "ln");
+        if (ln != null) {
+            if (kid(ln, "noFill") != null) return new Object[]{null, 0.0};
+            String c = colorOf(kid(ln, "solidFill"), ctx);
+            if (c == null) c = colorOf(kid(kid(ln, "gradFill"), "gsLst") != null ? kid(kid(kid(ln, "gradFill"), "gsLst"), "gs") : null, ctx);
+            if (c == null) c = refColor;
+            String w = attr(ln, "w");
+            long width = w != null ? parseLong(w, 9525) : (refW > 0 ? refW : 9525);
+            if (c != null) return new Object[]{c, Math.max(0.75, width / EMU_PX)};
+        }
+        if (refColor != null) return new Object[]{refColor, Math.max(0.75, refW / EMU_PX)};
         return null;
+    }
+
+    private String lineCss(Element spPr, Element style, Ctx ctx) {
+        Object[] o = outline(spPr, style, ctx);
+        if (o == null) return null;
+        if (o[0] == null) return "";
+        return "border:" + r1((Double) o[1]) + "px solid " + o[0] + ";";
     }
 
     private String scheme(String name, Ctx ctx) {
@@ -914,7 +1059,10 @@ public final class PptxToHtml {
         }
         Element own = bodies.get(0);
         Element fit = kid(own, "normAutofit");
+        double lnScale = 1;
         if (fit != null && attr(fit, "fontScale") != null) fontScale = parseInt(attr(fit, "fontScale"), 100000) / 100000.0;
+        // La reducción de interlineado de PowerPoint no se aplica: con otras fuentes las letras
+        // se montan. Si el texto no cabe, el visor lo encoge completo (data-fit).
 
         String jc = "flex-start";
         if ("ctr".equals(anchor)) jc = "center";
@@ -926,13 +1074,15 @@ public final class PptxToHtml {
                 .append(r1((lIns != null ? lIns : 91440) / EMU_PX)).append("px;");
         sb.append("\"");
         if ("none".equals(wrap)) sb.append(" data-nw=\"1\"");
-        sb.append('>');
-        paragraphs(txBody, lst, fontColor, defFont, fontScale, ctx, part, sb, null);
-        sb.append("</div>");
+        // Con autoajuste, si el texto no cabe (fuentes distintas en el celular) se encoge
+        if (fit != null) sb.append(" data-fit=\"1\"");
+        sb.append("><div class=\"tin\">");
+        paragraphs(txBody, lst, fontColor, defFont, fontScale, lnScale, ctx, part, sb, null);
+        sb.append("</div></div>");
     }
 
     private void paragraphs(Element txBody, List<Element> lst, String fontColor, String defFont, double fontScale,
-                            Ctx ctx, Part part, StringBuilder sb, TP styleTp) {
+                            double lnScale, Ctx ctx, Part part, StringBuilder sb, TP styleTp) {
         int[] counters = new int[10];
         int lastLvl = -1;
         for (Element p : kids(txBody)) {
@@ -950,6 +1100,7 @@ public final class PptxToHtml {
             StringBuilder content = new StringBuilder();
             boolean any = false;
             double firstSize = -1, maxSize = -1;
+            String firstColor = null;
             for (Element r : kids(p)) {
                 String n = name(r);
                 if ("r".equals(n) || "fld".equals(n)) {
@@ -959,7 +1110,10 @@ public final class PptxToHtml {
                     any = true;
                     TP rp = tp.over(parseR(kid(r, "rPr"), ctx));
                     double rs = (rp.sz != null ? rp.sz : 1800) / 100.0 * fontScale;
-                    if (firstSize < 0) firstSize = rs;
+                    if (firstSize < 0) {
+                        firstSize = rs;
+                        firstColor = rp.color != null ? rp.color : "#" + scheme("tx1", ctx);
+                    }
                     maxSize = Math.max(maxSize, rs);
                     String link = null;
                     Element hl = kid(kid(r, "rPr"), "hlinkClick");
@@ -1002,8 +1156,9 @@ public final class PptxToHtml {
             }
             if (tp.spcBef != null && tp.spcBef > 0) css.append("padding-top:").append(r1(tp.spcBef / 100.0 * fontScale)).append("pt;");
             else if (tp.spcBefPct != null && tp.spcBefPct > 0) css.append("padding-top:").append(r1(size * tp.spcBefPct / 100000.0)).append("pt;");
-            if (tp.lnPct != null) {
-                css.append("line-height:").append(String.format(Locale.ROOT, "%.3f", 1.2 * tp.lnPct / 100000.0)).append(';');
+            if (tp.lnPct != null || lnScale < 1) {
+                double pct = tp.lnPct != null ? tp.lnPct / 100000.0 : 1;
+                css.append("line-height:").append(String.format(Locale.ROOT, "%.3f", Math.max(0.9, 1.2 * pct * lnScale))).append(';');
             }
             css.append("font-size:").append(r1(size)).append("pt;");
 
@@ -1028,7 +1183,7 @@ public final class PptxToHtml {
                 if (marker != null) {
                     sb.append("<span class=\"bu\" style=\"");
                     if (indent < 0) sb.append("width:").append(r1(-indent / EMU_PX)).append("px;");
-                    String bc = tp.buColor != null ? tp.buColor : tp.color;
+                    String bc = tp.buColor != null ? tp.buColor : firstColor != null ? firstColor : tp.color;
                     if (bc != null) sb.append("color:").append(bc).append(';');
                     // La viñeta toma el tamaño del primer texto del párrafo
                     double bs = (firstSize > 0 ? firstSize : size) * (tp.buSzPct != null ? tp.buSzPct / 100000.0 : 1);
@@ -1186,7 +1341,8 @@ public final class PptxToHtml {
         String border = lineCss(spPr, null, ctx);
         if (border != null) css.append(border);
         Element geom = kid(spPr, "prstGeom");
-        css.append(geometry(geom != null ? attr(geom, "prst") : null, b));
+        String g = geometry(geom != null ? attr(geom, "prst") : null, b);
+        if (g != null) css.append(g);
         css.append("overflow:hidden;");
         sb.append("<div class=\"shp\" style=\"").append(css).append("\">");
         if (src == null) {
@@ -1299,7 +1455,25 @@ public final class PptxToHtml {
             } catch (Exception ignored) {
             }
         }
-        return id != null ? tableStyles.get(id.trim()) : null;
+        if (id == null) return null;
+        String key = id.trim();
+        Element st = tableStyles.get(key);
+        if (st == null && !tableStyles.containsKey(key)) {
+            // Estilo de fábrica de PowerPoint: el archivo solo trae su identificador
+            String xml = TableStyles.xml(key);
+            if (xml != null) {
+                try {
+                    javax.xml.parsers.DocumentBuilderFactory f = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+                    f.setNamespaceAware(true);
+                    st = f.newDocumentBuilder().parse(new org.xml.sax.InputSource(new java.io.StringReader(xml)))
+                            .getDocumentElement();
+                } catch (Exception ignored) {
+                    st = null;
+                }
+            }
+            tableStyles.put(key, st);
+        }
+        return st;
     }
 
     /** Borde CSS a partir de un elemento a:ln ("" = sin borde, null = sin definir). */
@@ -1444,7 +1618,7 @@ public final class PptxToHtml {
                     chain.add(kid(txBody, "lstStyle"));
                     chain.addAll(lst);
                     if (textColor != null) stp.color = textColor;
-                    paragraphs(txBody, chain, null, "+mn-lt", 1, ctx, part, sb, stp);
+                    paragraphs(txBody, chain, null, "+mn-lt", 1, 1, ctx, part, sb, stp);
                 }
                 sb.append("</td>");
             }

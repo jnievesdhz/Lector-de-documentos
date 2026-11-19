@@ -64,6 +64,7 @@ body.pptx{background:#303030;padding:8px 6px}
 .txt{position:absolute;left:0;top:0;right:0;bottom:0;display:flex;flex-direction:column;box-sizing:border-box;overflow-wrap:break-word}
 .pp{white-space:pre-wrap;margin:0}
 .txt[data-nw] .pp{white-space:pre}
+.cg{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible}
 .bu{display:inline-block;text-indent:0}
 .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#f2f2f2;border:2px dashed #bbb;color:#888;font-size:24px}
 table.pt{border-collapse:collapse;table-layout:fixed;width:100%}
@@ -84,6 +85,20 @@ table.pt td{overflow:hidden}
     /** Ajusta cada diapositiva al ancho de la pantalla. */
     const val SLIDES_SCRIPT = """
 (function(){
+  // Encoge el texto que no cabe en su cuadro (PowerPoint lo hace solo; en el celular las fuentes cambian)
+  function fitText(){
+    var fs=document.querySelectorAll('.txt[data-fit]');
+    for(var k=0;k<fs.length;k++){
+      var t=fs[k], inner=t.firstElementChild;
+      if(!inner) continue;
+      inner.style.zoom='';
+      var cs=getComputedStyle(t);
+      var avail=t.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
+      var h=inner.offsetHeight;
+      if(avail>0 && h>avail+1){ inner.style.zoom=Math.max(0.45,avail/h*0.98); }
+    }
+  }
+  fitText();
   function fit(){
     var ss=document.querySelectorAll('.sl');
     for(var k=0;k<ss.length;k++){

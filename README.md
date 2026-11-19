@@ -32,7 +32,8 @@ Las versiones nuevas se instalan encima de la anterior (están firmadas con la m
 
 - Los formatos antiguos (.doc, .xls, .ppt) y los archivos con contraseña no se pueden abrir.
 - En Excel se muestran hasta 3000 filas y 120 columnas por hoja. Los gráficos de Excel no se muestran.
-- En PowerPoint no hay animaciones ni transiciones, y las formas poco comunes se dibujan como rectángulos.
+- En PowerPoint no hay animaciones ni transiciones. Las formas poco comunes (flechas curvas, nubes, corazones) no se dibujan, pero su texto sí se muestra.
+- Si el celular no tiene la fuente de la presentación, usa una parecida y encoge el texto que no quepa en su cuadro.
 - En Word no se muestran encabezados ni pies de página, y las imágenes EMF/WMF salen como "[imagen]".
 
 ## Próximas etapas
