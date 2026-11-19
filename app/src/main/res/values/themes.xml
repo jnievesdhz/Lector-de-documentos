@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tema claro u oscuro según la configuración del teléfono -->
+    <style name="Theme.Lector" parent="@android:style/Theme.DeviceDefault.DayNight" />
+</resources>
